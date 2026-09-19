@@ -100,6 +100,9 @@ p.vs{color:var(--muted);font-size:13px;margin-bottom:16px}
 .drophint{display:block;margin-top:12px;font-size:12px;line-height:1.5}
 .hintline{font-size:12px;color:var(--muted);margin-top:10px;line-height:1.5}
 .sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+.diagbox{margin-top:14px;border-top:1px solid var(--line);padding-top:10px}
+.diagbox summary{font-size:12px;color:var(--muted);cursor:pointer}
+#diag{background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:10px;margin:8px 0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;line-height:1.6;color:var(--muted);white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto}
 .row{display:flex;gap:10px;flex-wrap:wrap}
 .row>*{flex:1;min-width:140px}
 .up{display:flex;align-items:center;gap:10px;font-size:13px;padding:8px 0;border-bottom:1px solid var(--line)}
@@ -246,7 +249,13 @@ p.vs{color:var(--muted);font-size:13px;margin-bottom:16px}
         <span class="drophint">am Computer auch per Drag &amp; Drop<br>MP3, M4A, FLAC, OGG, WAV · max. 100 MB</span>
       </label>
       <input type="file" id="file" accept="audio/*,.mp3,.m4a,.aac,.flac,.ogg,.oga,.opus,.wav" multiple class="sr">
-      <p class="hintline" id="pickHint">Am Handy öffnet sich die Dateiauswahl – dort ggf. auf „Durchsuchen" oder „Dateien" wechseln, um MP3s aus dem Speicher zu wählen.</p>
+      <p class="hintline" id="pickHint">Am iPhone im Auswahlfenster auf <b>„Dateien auswählen"</b> tippen – nicht auf Fotomediathek. Titel aus der Musik-App sind für den Browser gesperrt; die MP3 muss in der Dateien-App liegen.</p>
+      <details class="diagbox">
+        <summary>Diagnose</summary>
+        <p class="hintline" style="margin-top:8px">Version <b id="buildTag">–</b> · <span id="envInfo"></span></p>
+        <pre id="diag">noch nichts passiert</pre>
+        <button class="btn ghost small" id="diagCopy" type="button">Protokoll kopieren</button>
+      </details>
       <div id="uplist" style="margin-top:12px"></div>
     </div>
 
@@ -336,6 +345,19 @@ var LEGAL = {
   email: "info@alexander-scherer.com",
   paypal: "https://www.paypal.com/paypalme/AlexanderGlauche"
 };
+
+var BUILD = "2026-09-19 04:12";
+
+/* Protokolliert die Upload-Schritte sichtbar in der App. Am Handy gibt es
+   keine Entwicklerkonsole – ohne das bliebe jeder Fehlschlag unsichtbar. */
+function diag(msg){
+  var el = document.getElementById("diag");
+  if(!el) return;
+  var t = new Date().toTimeString().slice(0, 8);
+  if(el.textContent === "noch nichts passiert") el.textContent = "";
+  el.textContent += t + "  " + msg + "\n";
+  el.scrollTop = el.scrollHeight;
+}
 
 var sb = window.supabase.createClient(CONFIG.url, CONFIG.key);
 var $ = function(id){ return document.getElementById(id); };
@@ -645,6 +667,14 @@ var drop = $("drop");
    for="file". Ein per JS ausgelöster Klick auf ein Input im selben Element
    blubbert zurück und löst sich endlos selbst aus – genau das hat die
    Auswahl auf dem Handy verhindert. */
+/* Auf Touch-Geräten den accept-Filter entfernen: iOS Safari zeigt mit einem
+   Audio-Filter nur Foto- und Musikmediathek an, und an die Musikmediathek
+   kommt der Browser gar nicht heran – die Dateien-App fehlt dann im Menü.
+   Ohne Filter erscheint „Dateien auswählen". Am Schreibtisch bleibt der
+   Filter erhalten, dort ist er nur bequem und stört nicht.
+   Aussortiert wird ohnehin in handleFiles. */
+if(navigator.maxTouchPoints > 0) $("file").removeAttribute("accept");
+
 $("file").onchange = function(e){ handleFiles(e.target.files); e.target.value = ""; };
 ["dragenter","dragover"].forEach(function(ev){
   drop.addEventListener(ev, function(e){ e.preventDefault(); drop.classList.add("over"); });
@@ -663,6 +693,8 @@ function guessMeta(name){
 
 async function handleFiles(files){
   var all = Array.prototype.slice.call(files);
+  diag("Auswahl: " + all.length + " Datei(en)" +
+       (all.length ? " – " + all.map(function(f){ return f.name + " [" + (f.type || "kein Typ") + "]"; }).join(", ") : ""));
   var arr = all.filter(function(f){
     return f.type.indexOf("audio") === 0 ||
            /\.(mp3|m4a|mp4|aac|flac|ogg|oga|opus|wav|wma|aiff?)$/i.test(f.name);
@@ -696,27 +728,42 @@ async function uploadOne(file){
   $("uplist").prepend(row);
   var fill = row.querySelector("i"), st = row.querySelector(".st");
 
-  if(file.size > 100 * 1024 * 1024){ st.textContent = "zu groß (>100 MB)"; return; }
+  diag("Datei: " + file.name + " · " + Math.round(file.size/1024) + " KB · Typ: " + (file.type || "unbekannt"));
 
-  var ext = (file.name.split(".").pop() || "mp3").toLowerCase();
-  var path = state.user.id + "/" + (crypto.randomUUID ? crypto.randomUUID() : Date.now() + "-" + Math.random().toString(36).slice(2)) + "." + ext;
+  try{
+    if(!state.user){ st.textContent = "nicht angemeldet"; diag("FEHLER: keine Sitzung – bitte neu anmelden."); return; }
+    if(file.size > 100 * 1024 * 1024){ st.textContent = "zu groß (>100 MB)"; diag("FEHLER: über 100 MB."); return; }
 
-  fill.style.width = "40%";
-  var up = await sb.storage.from(CONFIG.bucket).upload(path, file, { contentType:file.type || "audio/mpeg", upsert:false });
-  if(up.error){ st.textContent = "Fehler: " + up.error.message; return; }
+    var ext = (file.name.split(".").pop() || "mp3").toLowerCase();
+    var rnd = (window.crypto && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : Date.now() + "-" + Math.random().toString(36).slice(2);
+    var path = state.user.id + "/" + rnd + "." + ext;
 
-  fill.style.width = "75%";
-  var meta = guessMeta(file.name);
-  var dur = await readDuration(file);
+    fill.style.width = "40%";
+    diag("Storage-Upload startet …");
+    var up = await sb.storage.from(CONFIG.bucket).upload(path, file, { contentType:file.type || "audio/mpeg", upsert:false });
+    if(up.error){ st.textContent = "Fehler: " + up.error.message; diag("STORAGE-FEHLER: " + up.error.message); return; }
+    diag("Storage OK.");
 
-  var ins = await sb.from("mp_tracks").insert({
-    user_id:state.user.id, title:meta.title || file.name, artist:meta.artist,
-    source:"storage", storage_path:path, duration:dur
-  });
-  if(ins.error){ st.textContent = "DB-Fehler: " + ins.error.message; return; }
+    fill.style.width = "75%";
+    var meta = guessMeta(file.name);
+    var dur = await readDuration(file);
 
-  fill.style.width = "100%";
-  st.textContent = "fertig ✓";
+    var ins = await sb.from("mp_tracks").insert({
+      user_id:state.user.id, title:meta.title || file.name, artist:meta.artist,
+      source:"storage", storage_path:path, duration:dur
+    });
+    if(ins.error){ st.textContent = "DB-Fehler: " + ins.error.message; diag("DB-FEHLER: " + ins.error.message); return; }
+
+    fill.style.width = "100%";
+    st.textContent = "fertig ✓";
+    diag("Eintrag angelegt ✓");
+  }catch(e){
+    /* Ohne diesen Fang bliebe bei einem Abbruch nur ein ewiges „lädt …" stehen. */
+    st.textContent = "abgebrochen";
+    diag("AUSNAHME: " + (e && e.message ? e.message : String(e)));
+  }
 }
 
 function readDuration(file){
@@ -1017,6 +1064,23 @@ $("legalBody").innerHTML =
 
   '<h3>Haftung für Links</h3>' +
   '<p>Externe Links – dazu zählen auch selbst hinterlegte Song-URLs – führen zu Inhalten fremder Anbieter, für die ausschließlich deren Betreiber verantwortlich sind. Zum Zeitpunkt der Verlinkung waren keine Rechtsverstöße erkennbar. Bei Bekanntwerden von Rechtsverletzungen werden entsprechende Links entfernt.</p>';
+
+/* Versions- und Umgebungsanzeige für die Fehlersuche */
+$("buildTag").textContent = BUILD;
+$("envInfo").textContent =
+  (window.isSecureContext ? "sicherer Kontext" : "UNSICHER (http)") +
+  " · " + location.protocol.replace(":", "") +
+  " · Touch: " + (navigator.maxTouchPoints > 0 ? "ja" : "nein") +
+  " · Filter: " + ($("file").getAttribute("accept") ? "an" : "aus");
+$("diagCopy").onclick = function(){
+  var txt = "Version " + BUILD + "\n" + $("envInfo").textContent + "\n" +
+            navigator.userAgent + "\n\n" + $("diag").textContent;
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(txt).then(function(){ $("diagCopy").textContent = "kopiert ✓"; });
+  } else {
+    $("diag").textContent = txt;
+  }
+};
 
 /* Session beim Start prüfen */
 sb.auth.getSession();
