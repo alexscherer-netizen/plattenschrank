@@ -93,8 +93,13 @@ p.vs{color:var(--muted);font-size:13px;margin-bottom:16px}
 /* ---------- Cards / Upload ---------- */
 .card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:16px;margin-bottom:14px}
 .card h3{font-size:15px;margin-bottom:12px}
-.drop{border:2px dashed var(--line);border-radius:var(--r);padding:34px 16px;text-align:center;color:var(--muted);font-size:14px}
+.drop{display:block;border:2px dashed var(--line);border-radius:var(--r);padding:24px 16px;text-align:center;color:var(--muted);font-size:14px;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.drop:active{border-color:var(--acc);background:#11302c}
 .drop.over{border-color:var(--acc);background:#11302c;color:var(--txt)}
+.dropbtn{display:inline-block;background:linear-gradient(135deg,var(--acc),var(--acc2));color:#04211d;font-weight:650;padding:12px 20px;border-radius:10px;font-size:15px}
+.drophint{display:block;margin-top:12px;font-size:12px;line-height:1.5}
+.hintline{font-size:12px;color:var(--muted);margin-top:10px;line-height:1.5}
+.sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
 .row{display:flex;gap:10px;flex-wrap:wrap}
 .row>*{flex:1;min-width:140px}
 .up{display:flex;align-items:center;gap:10px;font-size:13px;padding:8px 0;border-bottom:1px solid var(--line)}
@@ -236,10 +241,12 @@ p.vs{color:var(--muted);font-size:13px;margin-bottom:16px}
 
     <div class="card">
       <h3>Dateien hochladen</h3>
-      <div class="drop" id="drop">
-        Audiodateien hierher ziehen<br><span style="font-size:12px">oder tippen zum Auswählen · MP3, M4A, FLAC, OGG, WAV · max. 100 MB</span>
-        <input type="file" id="file" accept="audio/*" multiple hidden>
-      </div>
+      <label class="drop" id="drop" for="file">
+        <span class="dropbtn">Dateien auswählen</span>
+        <span class="drophint">am Computer auch per Drag &amp; Drop<br>MP3, M4A, FLAC, OGG, WAV · max. 100 MB</span>
+      </label>
+      <input type="file" id="file" accept="audio/*,.mp3,.m4a,.aac,.flac,.ogg,.oga,.opus,.wav" multiple class="sr">
+      <p class="hintline" id="pickHint">Am Handy öffnet sich die Dateiauswahl – dort ggf. auf „Durchsuchen" oder „Dateien" wechseln, um MP3s aus dem Speicher zu wählen.</p>
       <div id="uplist" style="margin-top:12px"></div>
     </div>
 
@@ -634,7 +641,10 @@ async function removeFromPl(pid, tid){
    Upload
    ======================================================= */
 var drop = $("drop");
-drop.onclick = function(){ $("file").click(); };
+/* Kein eigener Klick-Handler: das Label öffnet den Dateidialog nativ über
+   for="file". Ein per JS ausgelöster Klick auf ein Input im selben Element
+   blubbert zurück und löst sich endlos selbst aus – genau das hat die
+   Auswahl auf dem Handy verhindert. */
 $("file").onchange = function(e){ handleFiles(e.target.files); e.target.value = ""; };
 ["dragenter","dragover"].forEach(function(ev){
   drop.addEventListener(ev, function(e){ e.preventDefault(); drop.classList.add("over"); });
@@ -652,11 +662,30 @@ function guessMeta(name){
 }
 
 async function handleFiles(files){
-  var arr = Array.prototype.slice.call(files).filter(function(f){
-    return f.type.indexOf("audio") === 0 || /\.(mp3|m4a|aac|flac|ogg|wav|opus)$/i.test(f.name);
+  var all = Array.prototype.slice.call(files);
+  var arr = all.filter(function(f){
+    return f.type.indexOf("audio") === 0 ||
+           /\.(mp3|m4a|mp4|aac|flac|ogg|oga|opus|wav|wma|aiff?)$/i.test(f.name);
   });
+  var hint = $("pickHint");
+  if(!all.length){
+    hint.textContent = "Es wurde keine Datei ausgewählt.";
+  } else if(!arr.length){
+    /* Manche Dateimanager liefern weder Typ noch Endung – dann lieber sagen,
+       was los ist, statt kommentarlos nichts zu tun. */
+    hint.textContent = all.length === 1
+      ? '„' + all[0].name + '" wurde nicht als Audiodatei erkannt. Wähle die Datei über die Dateien-App statt über die Musik-/Galerie-Auswahl.'
+      : "Keine der " + all.length + " Dateien wurde als Audiodatei erkannt.";
+  } else {
+    hint.textContent = arr.length + (arr.length === 1 ? " Datei wird hochgeladen …" : " Dateien werden hochgeladen …");
+  }
   for(var i = 0; i < arr.length; i++) await uploadOne(arr[i]);
-  await loadTracks();
+  if(arr.length){
+    hint.textContent = arr.length === 1
+      ? "Fertig. Der Song liegt jetzt in deiner Bibliothek."
+      : "Fertig. " + arr.length + " Songs liegen jetzt in deiner Bibliothek.";
+    await loadTracks();
+  }
 }
 
 async function uploadOne(file){
