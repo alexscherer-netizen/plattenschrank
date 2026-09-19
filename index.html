@@ -301,7 +301,11 @@ p.vs{color:var(--muted);font-size:13px;margin-bottom:16px}
         <p class="hintline" style="margin-top:8px">Version <b id="buildTag">–</b> · <span id="envInfo"></span></p>
         <pre id="audioPath">–</pre>
         <pre id="diag">noch nichts passiert</pre>
-        <button class="btn ghost small" id="diagCopy" type="button">Protokoll kopieren</button>
+        <div class="row" style="margin-top:4px">
+          <button class="btn ghost small" id="diagCopy" type="button">Protokoll kopieren</button>
+          <button class="btn ghost small" id="lockTest" type="button">Sperrtest starten</button>
+        </div>
+        <p class="hintline" id="lockHint" style="display:none"></p>
       </details>
       <div id="uplist" style="margin-top:12px"></div>
     </div>
@@ -335,6 +339,11 @@ p.vs{color:var(--muted);font-size:13px;margin-bottom:16px}
   <div class="pwrap">
     <div id="silentWarn" style="display:none;background:#3b2a14;border:1px solid #7a5520;border-radius:10px;padding:9px 11px;margin-bottom:8px;font-size:12px;line-height:1.5;color:#f0d4a0">
       <span id="silentText">Bei gesperrtem Bildschirm kam kein Ton – die Klangregelung wird von iOS dabei eingefroren.</span>
+    </div>
+    <div id="resumeBar" style="display:none;background:#11302c;border:1px solid #1d5b4c;border-radius:10px;padding:9px 11px;margin-bottom:8px;font-size:12.5px;line-height:1.5;color:#9ff0da">
+      <span id="resumeText"></span>
+      <button class="linkbtn" id="resumeGo" type="button" style="font-size:12.5px;padding:0 0 0 6px">Weiterhören</button>
+      <button class="linkbtn" id="resumeNo" type="button" style="font-size:12.5px;color:var(--muted);padding:0 0 0 6px">Verwerfen</button>
       <button class="linkbtn" id="silentFix" type="button" style="font-size:12px;color:#ffd48a;padding:0 0 0 4px">Hintergrundwiedergabe einschalten</button>
     </div>
     <div class="eqwrap" id="eqwrap"><canvas id="eq" aria-hidden="true"></canvas></div>
@@ -397,7 +406,7 @@ var LEGAL = {
   paypal: "https://www.paypal.com/paypalme/AlexanderGlauche"
 };
 
-var BUILD = "2026-09-19 05:02";
+var BUILD = "2026-09-19 05:26";
 
 /* Protokolliert die Upload-Schritte sichtbar in der App. Am Handy gibt es
    keine Entwicklerkonsole – ohne das bliebe jeder Fehlschlag unsichtbar. */
@@ -468,6 +477,7 @@ sb.auth.onAuthStateChange(function(_e, session){
 async function boot(){
   await loadTracks();
   await loadPlaylists();
+  offerResume();
 }
 
 /* =======================================================
@@ -880,6 +890,8 @@ async function play(){
   }
   audio.volume = parseFloat($("vol").value);
   audio.src = src;
+  parkIdleElement();
+  applyPendingSeek();
   if(audio === audioA) initGraph();
   if(actx && actx.state === "suspended") actx.resume();
   audio.play().catch(function(e){ console.warn(e); });
@@ -994,6 +1006,18 @@ function initGraph(){
   }catch(e){ console.warn("Web Audio nicht verfügbar:", e); actx = null; analyser = null; }
 }
 
+/* iOS verwaltet den Ton einer Seite über eine einzige Audio-Sitzung. Ein
+   zweites Audio-Element, das nur herumsteht, kann sich darin einmischen –
+   deshalb nehmen wir das gerade unbenutzte ganz aus dem Dokument. */
+function parkIdleElement(){
+  var idle = (audio === audioA) ? audioB : audioA;
+  try{
+    idle.pause();
+    if(idle.parentNode) idle.parentNode.removeChild(idle);
+    if(!audio.parentNode) document.body.appendChild(audio);
+  }catch(e){}
+}
+
 function dbToGain(db){ return Math.pow(10, db / 20); }
 
 /* Ob ein Titel durch die Filterkette läuft, entscheidet das Audio-Element –
@@ -1011,6 +1035,7 @@ function switchPath(){
   audio = want;
   audio.volume = parseFloat($("vol").value);
   audio.src = src;
+  parkIdleElement();
   if(audio === audioA) initGraph();
   audio.currentTime = pos;
   if(wasPlaying){
@@ -1019,6 +1044,24 @@ function switchPath(){
   }
   setPlayIcon();
   updateBgBanner();
+}
+
+/* Ohne gesetzten playbackState meldet Safari die Wiedergabe nicht als
+   „Now Playing" an. Der Sperrbildschirm zeigt dann weiter die zuletzt aktive
+   Medien-App – deren Steuerung greift natürlich nicht auf unseren Titel zu,
+   und beim Entsperren öffnet iOS jene App statt Safari. */
+function setSessionState(st){
+  if(!("mediaSession" in navigator)) return;
+  try{
+    navigator.mediaSession.playbackState = st;
+    if(navigator.mediaSession.setPositionState && isFinite(audio.duration) && audio.duration > 0){
+      navigator.mediaSession.setPositionState({
+        duration: audio.duration,
+        position: Math.min(audio.currentTime, audio.duration),
+        playbackRate: audio.playbackRate || 1
+      });
+    }
+  }catch(e){}
 }
 
 /* Titelanzeige und Bedienknöpfe auf dem Sperrbildschirm. */
@@ -1037,6 +1080,9 @@ function setMediaSession(t){
     navigator.mediaSession.setActionHandler("pause", function(){ audio.pause(); });
     navigator.mediaSession.setActionHandler("previoustrack", function(){ prev(); });
     navigator.mediaSession.setActionHandler("nexttrack", function(){ next(false); });
+    /* Ohne das schätzt iOS den Fortschritt auf dem Sperrbildschirm selbst –
+       und zeigt dann eine laufende Leiste, obwohl nichts mehr spielt. */
+    setSessionState(audio.paused ? "paused" : "playing");
   }catch(e){ console.warn("MediaSession:", e); }
 }
 
@@ -1044,6 +1090,122 @@ function setMediaSession(t){
    der Sperre eingefroren war, während der Titel weiterlief. Genau dann lief
    das Lied ohne Ton, und das soll die App von sich aus sagen, statt es den
    Nutzer im Dunkeln herausfinden zu lassen. */
+/* ---------------------------------------------------------------
+   Sperrmessung
+   Beim Sperren hält iOS das Skript an; Ereignisse werden aber
+   nachgereicht. Wir notieren Wanduhr und Abspielposition vor und
+   nach der Sperre. Stimmen beide Zeitspannen überein, hat der Titel
+   wirklich gespielt und nur der Ton fehlte. Bleibt die Position
+   stehen, wurde die Wiedergabe angehalten – zwei völlig
+   verschiedene Ursachen.
+   --------------------------------------------------------------- */
+var lockProbe = null, lastPosSync = -1;
+
+/* ---------------------------------------------------------------
+   Wiederaufnahme nach einem verworfenen Tab
+   iOS räumt Safari-Tabs im Hintergrund weg. Passiert das, kommt die
+   Seite frisch geladen zurück und die Wiedergabe ist verloren. Wir
+   schreiben Titel, Warteschlange und Position laufend mit, damit
+   danach ein Tippen genügt, um an derselben Stelle weiterzuhören.
+   --------------------------------------------------------------- */
+/* Beim Fortsetzen steht das Sprungziel fest, bevor die Datei geladen ist.
+   Ein nachträglich angehängter Zuhörer kommt oft zu spät – die Metadaten
+   sind dann schon da und das Ereignis ist verpufft. Deshalb beides. */
+var pendingSeek = null;
+function applyPendingSeek(){
+  if(pendingSeek == null) return;
+  var target = pendingSeek, el = audio;
+  var go = function(){
+    try{ el.currentTime = target; }catch(e){}
+    pendingSeek = null;
+  };
+  if(el.readyState >= 1) go();
+  else el.addEventListener("loadedmetadata", go, { once:true });
+}
+
+function saveNowPlaying(){
+  try{
+    var t = state.queue[state.qi];
+    if(!t){ localStorage.removeItem("ps_now"); return; }
+    localStorage.setItem("ps_now", JSON.stringify({
+      ids: state.queue.map(function(x){ return x.id; }),
+      qi: state.qi,
+      pos: Math.floor(audio.currentTime),
+      title: t.title,
+      at: Date.now()
+    }));
+  }catch(e){}
+}
+
+function offerResume(){
+  var n;
+  try{ n = JSON.parse(localStorage.getItem("ps_now") || "null"); }catch(e){ return; }
+  if(!n || !n.ids || !n.ids.length || n.pos < 5) return;
+  if(Date.now() - n.at > 12 * 3600 * 1000) return;   /* älter als ein halber Tag */
+
+  var list = n.ids.map(function(id){
+    return state.tracks.find(function(x){ return x.id === id; });
+  }).filter(Boolean);
+  if(!list.length) return;
+
+  var bar = $("resumeBar");
+  $("player").style.display = "block";
+  bar.style.display = "block";
+  $("resumeText").textContent = n.title + " – bei " + fmt(n.pos) + " fortsetzen?";
+  $("resumeGo").onclick = function(){
+    bar.style.display = "none";
+    state.queue = list;
+    state.qi = Math.min(n.qi, list.length - 1);
+    pendingSeek = n.pos;
+    play();
+  };
+  $("resumeNo").onclick = function(){
+    bar.style.display = "none";
+    try{ localStorage.removeItem("ps_now"); }catch(e){}
+  };
+}
+
+["pause","play","playing","waiting","stalled","suspend","ended","error","volumechange"]
+  .forEach(function(ev){
+    [audioA, audioB].forEach(function(el){
+      el.addEventListener(ev, function(){
+        if(!lockProbe || el !== audio) return;
+        lockProbe.events.push(ev + " @ " + el.currentTime.toFixed(1) + "s");
+      });
+    });
+  });
+
+$("lockTest").onclick = function(){
+  if(audio.paused){ $("lockHint").style.display = "block"; $("lockHint").textContent = "Erst einen Titel abspielen, dann den Test starten."; return; }
+  lockProbe = { t0:Date.now(), pos0:audio.currentTime, el:(audio === audioA ? "audioA" : "audioB"), events:[] };
+  $("lockHint").style.display = "block";
+  $("lockHint").textContent = "Messung läuft. Sperre jetzt den Bildschirm, warte etwa 30 Sekunden und entsperre wieder.";
+  diag("SPERRTEST gestartet bei " + audio.currentTime.toFixed(1) + "s über " + lockProbe.el);
+};
+
+function finishLockProbe(){
+  if(!lockProbe) return;
+  var wall = (Date.now() - lockProbe.t0) / 1000;
+  var played = audio.currentTime - lockProbe.pos0;
+  if(wall < 8){ return; }   /* zu kurz weg – wir messen weiter */
+  diag("SPERRTEST Ergebnis: " + wall.toFixed(1) + "s vergangen, " +
+       played.toFixed(1) + "s abgespielt");
+  diag("  Ereignisse: " + (lockProbe.events.length ? lockProbe.events.join(", ") : "keine"));
+  diag("  Zustand jetzt: " + (audio.paused ? "pausiert" : "läuft") +
+       " · readyState " + audio.readyState + " · networkState " + audio.networkState +
+       " · Lautstärke " + audio.volume + (audio.muted ? " · stumm" : ""));
+  /* Ob dabei Ton aus dem Lautsprecher kam, kann die Seite nicht messen –
+     das muss der Nutzer beisteuern. Hier steht nur, ob die Wiedergabe lief. */
+  var verdict = played > wall * 0.7
+    ? "→ Die Wiedergabe lief durchgehend weiter."
+    : (played < 2
+        ? "→ Die Wiedergabe stand still, sie wurde also angehalten."
+        : "→ Die Wiedergabe stockte zwischendurch.");
+  diag("  " + verdict);
+  $("lockHint").textContent = wall.toFixed(0) + "s gesperrt, " + played.toFixed(0) + "s abgespielt. " + verdict;
+  lockProbe = null;
+}
+
 var wasMutedInBg = false;
 document.addEventListener("visibilitychange", function(){
   if(document.visibilityState === "hidden"){
@@ -1055,6 +1217,7 @@ document.addEventListener("visibilitychange", function(){
     if(wasMutedInBg) showSilentWarning();
   }
   wasMutedInBg = false;
+  finishLockProbe();
 });
 
 function showSilentWarning(){
@@ -1235,6 +1398,9 @@ function eqSize(){
 window.addEventListener("resize", eqSize);
 
 function drawEq(){
+  /* Im Hintergrund nicht weiterzeichnen: Das spart Arbeitsspeicher und
+     Rechenzeit und verringert die Gefahr, dass iOS den Tab wegräumt. */
+  if(document.visibilityState === "hidden"){ eqRAF = null; return; }
   eqRAF = requestAnimationFrame(drawEq);
   var w = eqc.width / (window.devicePixelRatio || 1);
   var h = eqc.height / (window.devicePixelRatio || 1);
@@ -1337,13 +1503,18 @@ $("bRepeat").onclick = function(){
 function setPlayIcon(){ $("bPlay").textContent = audio.paused ? "▶" : "⏸"; }
 
 [audioA, audioB].forEach(function(el){
-  el.onplay = function(){ if(el !== audio) return; setPlayIcon(); startEq(); };
-  el.onpause = function(){ if(el !== audio) return; setPlayIcon(); };
+  el.onplay = function(){ if(el !== audio) return; setPlayIcon(); startEq(); setSessionState("playing"); };
+  el.onpause = function(){ if(el !== audio) return; setPlayIcon(); setSessionState("paused"); };
   el.onended = function(){ if(el !== audio) return; next(true); };
   el.ontimeupdate = function(){
     if(el !== audio) return;
     $("tCur").textContent = fmt(el.currentTime);
     if(el.duration) $("seekFill").style.width = (el.currentTime / el.duration * 100) + "%";
+    if(Math.floor(el.currentTime) !== lastPosSync){
+      lastPosSync = Math.floor(el.currentTime);
+      setSessionState(el.paused ? "paused" : "playing");
+      saveNowPlaying();
+    }
   };
   el.onloadedmetadata = async function(){
     if(el !== audio) return;
