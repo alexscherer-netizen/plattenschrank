@@ -259,6 +259,12 @@ p.vs{color:var(--muted);font-size:13px;margin-bottom:16px}
     </div>
 
     <div class="card">
+      <h3>Wiedergabe bei gesperrtem Bildschirm</h3>
+      <label class="switch" style="margin-bottom:8px"><input type="checkbox" id="bgPlay"> Hintergrundwiedergabe bevorzugen</label>
+      <p class="hintline" id="bgHint" style="margin-top:0"></p>
+    </div>
+
+    <div class="card" id="bandCard">
       <h3>Bänder</h3>
       <div id="bands"></div>
       <div class="bandrow" style="border-top:1px solid var(--line);padding-top:12px;margin-top:4px">
@@ -386,7 +392,7 @@ var LEGAL = {
   paypal: "https://www.paypal.com/paypalme/AlexanderGlauche"
 };
 
-var BUILD = "2026-09-19 04:28";
+var BUILD = "2026-09-19 04:40";
 
 /* Protokolliert die Upload-Schritte sichtbar in der App. Am Handy gibt es
    keine Entwicklerkonsole – ohne das bliebe jeder Fehlschlag unsichtbar. */
@@ -860,7 +866,7 @@ async function play(){
   var src = await srcFor(t);
   if(!src) return;
 
-  var el = (t.source === "storage") ? audioA : audioB;
+  var el = useGraphFor(t) ? audioA : audioB;
   if(el !== audio){
     audio.pause();
     audio.removeAttribute("src");
@@ -880,6 +886,7 @@ async function play(){
   renderLib(); renderFav();
   if(state.openPl) renderPlDetail(state.openPl);
   syncEqUI();
+  setMediaSession(t);
   countPlay(t);
 }
 
@@ -927,7 +934,22 @@ var PRESETS = [
 ];
 
 var eqFilters = [], preampNode = null;
-var eqState = { gains:[0,0,0,0,0,0], pre:0, preset:"Neutral", enabled:true };
+var eqState = { gains:[0,0,0,0,0,0], pre:0, preset:"Neutral", enabled:true, bg:null };
+
+/* iOS friert den AudioContext ein, sobald der Bildschirm sperrt – ein Titel,
+   der durch die Klangregelung läuft, verstummt dann. Ein unbearbeitetes
+   Audio-Element spielt weiter. Auf iPhone und iPad ist die
+   Hintergrundwiedergabe deshalb voreingestellt, sonst die Klangregelung.
+   Siehe WebKit-Bug 237878. */
+var IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+             (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+
+function bgPreferred(){ return eqState.bg === null ? IS_IOS : eqState.bg; }
+
+/* Nur wenn beides zusammenpasst, darf der Titel durch die Filterkette. */
+function useGraphFor(t){
+  return t && t.source === "storage" && eqState.enabled && !bgPreferred();
+}
 
 function initGraph(){
   if(actx || !window.AudioContext && !window.webkitAudioContext) return;
@@ -963,6 +985,56 @@ function initGraph(){
 }
 
 function dbToGain(db){ return Math.pow(10, db / 20); }
+
+/* Ob ein Titel durch die Filterkette läuft, entscheidet das Audio-Element –
+   und das lässt sich nachträglich nicht umhängen. Beim Umschalten während
+   der Wiedergabe wird deshalb an gleicher Stelle im anderen Element
+   weitergespielt. */
+function switchPath(){
+  var t = state.queue[state.qi];
+  if(!t) return;
+  var want = useGraphFor(t) ? audioA : audioB;
+  if(want === audio) return;
+  var pos = audio.currentTime, wasPlaying = !audio.paused;
+  var src = audio.currentSrc;
+  audio.pause();
+  audio = want;
+  audio.volume = parseFloat($("vol").value);
+  audio.src = src;
+  if(audio === audioA) initGraph();
+  audio.currentTime = pos;
+  if(wasPlaying){
+    if(actx && actx.state === "suspended") actx.resume();
+    audio.play().catch(function(e){ console.warn(e); });
+  }
+  setPlayIcon();
+}
+
+/* Titelanzeige und Bedienknöpfe auf dem Sperrbildschirm. */
+function setMediaSession(t){
+  if(!("mediaSession" in navigator)) return;
+  try{
+    var art = [];
+    if(t.cover_url) art.push({ src:t.cover_url, sizes:"512x512", type:"image/jpeg" });
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: t.title || "Unbekannt",
+      artist: t.artist || "Unbekannt",
+      album: t.album || "Plattenschrank",
+      artwork: art
+    });
+    navigator.mediaSession.setActionHandler("play", function(){ audio.play(); });
+    navigator.mediaSession.setActionHandler("pause", function(){ audio.pause(); });
+    navigator.mediaSession.setActionHandler("previoustrack", function(){ prev(); });
+    navigator.mediaSession.setActionHandler("nexttrack", function(){ next(false); });
+  }catch(e){ console.warn("MediaSession:", e); }
+}
+
+/* Nach dem Entsperren den Kontext wiederbeleben, damit es weitergeht. */
+document.addEventListener("visibilitychange", function(){
+  if(document.visibilityState === "visible" && actx && actx.state === "suspended"){
+    actx.resume().catch(function(){});
+  }
+});
 
 function applyEq(){
   if(!actx) return;
@@ -1028,10 +1100,14 @@ function buildEqUI(){
   };
   $("eqEnable").onchange = function(){
     eqState.enabled = this.checked;
-    syncEqUI(); applyEq(); saveEq();
+    syncEqUI(); applyEq(); saveEq(); switchPath();
+  };
+  $("bgPlay").onchange = function(){
+    eqState.bg = this.checked;
+    syncEqUI(); saveEq(); switchPath();
   };
   $("eqFlat").onclick = function(){
-    eqState = { gains:[0,0,0,0,0,0], pre:0, preset:"Neutral", enabled:true };
+    eqState = { gains:[0,0,0,0,0,0], pre:0, preset:"Neutral", enabled:true, bg:eqState.bg };
     $("eqEnable").checked = true;
     syncEqUI(); applyEq(); saveEq();
   };
@@ -1064,6 +1140,29 @@ function syncEqUI(){
     b.classList.toggle("active", b.textContent === eqState.preset);
   });
   $("eqNow").textContent = "· aktiv: " + eqState.preset + (eqState.enabled ? "" : " (ausgeschaltet)");
+
+  var bg = bgPreferred();
+  $("bgPlay").checked = bg;
+  $("bgHint").innerHTML = bg
+    ? "Läuft weiter, wenn der Bildschirm ausgeht. Die Klangregelung ist dafür stillgelegt: iOS friert die Audio-Verarbeitung beim Sperren ein, ein bearbeiteter Titel würde verstummen."
+    : "Die Klangregelung ist aktiv. Am iPhone kann die Wiedergabe dadurch stoppen, sobald der Bildschirm ausgeht – am Rechner und unter Android nicht.";
+  /* Die Regler bleiben bedienbar, wirken aber erst nach dem Umschalten –
+     das sagen wir hier, statt sie kommentarlos ins Leere laufen zu lassen. */
+  $("bandCard").style.opacity = bg ? "0.5" : "1";
+  var note = $("bandCard").querySelector(".bandnote");
+  if(bg && !note){
+    note = document.createElement("p");
+    note.className = "hintline bandnote";
+    note.innerHTML = 'Wirkt erst, wenn die Hintergrundwiedergabe oben ausgeschaltet ist. ' +
+                     '<button class="linkbtn" id="bgOff" type="button" style="font-size:12px">Jetzt umschalten</button>';
+    $("bandCard").insertBefore(note, $("bandCard").firstChild.nextSibling);
+    note.querySelector("#bgOff").onclick = function(){
+      eqState.bg = false;
+      syncEqUI(); applyEq(); saveEq(); switchPath();
+    };
+  } else if(!bg && note){
+    note.remove();
+  }
   var peak = Math.max.apply(null, eqState.gains) + eqState.pre;
   $("clipHint").textContent = peak > 4
     ? "Achtung: " + peak.toFixed(1) + " dB Spitzenanhebung – das kann übersteuern. Vorverstärkung weiter senken."
