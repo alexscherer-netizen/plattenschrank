@@ -299,6 +299,7 @@ p.vs{color:var(--muted);font-size:13px;margin-bottom:16px}
       <details class="diagbox">
         <summary>Diagnose</summary>
         <p class="hintline" style="margin-top:8px">Version <b id="buildTag">–</b> · <span id="envInfo"></span></p>
+        <pre id="audioPath">–</pre>
         <pre id="diag">noch nichts passiert</pre>
         <button class="btn ghost small" id="diagCopy" type="button">Protokoll kopieren</button>
       </details>
@@ -333,7 +334,7 @@ p.vs{color:var(--muted);font-size:13px;margin-bottom:16px}
 <div id="player">
   <div class="pwrap">
     <div id="silentWarn" style="display:none;background:#3b2a14;border:1px solid #7a5520;border-radius:10px;padding:9px 11px;margin-bottom:8px;font-size:12px;line-height:1.5;color:#f0d4a0">
-      Bei gesperrtem Bildschirm kam kein Ton – die Klangregelung wird von iOS dabei eingefroren.
+      <span id="silentText">Bei gesperrtem Bildschirm kam kein Ton – die Klangregelung wird von iOS dabei eingefroren.</span>
       <button class="linkbtn" id="silentFix" type="button" style="font-size:12px;color:#ffd48a;padding:0 0 0 4px">Hintergrundwiedergabe einschalten</button>
     </div>
     <div class="eqwrap" id="eqwrap"><canvas id="eq" aria-hidden="true"></canvas></div>
@@ -396,7 +397,7 @@ var LEGAL = {
   paypal: "https://www.paypal.com/paypalme/AlexanderGlauche"
 };
 
-var BUILD = "2026-09-19 04:52";
+var BUILD = "2026-09-19 05:02";
 
 /* Protokolliert die Upload-Schritte sichtbar in der App. Am Handy gibt es
    keine Entwicklerkonsole – ohne das bliebe jeder Fehlschlag unsichtbar. */
@@ -891,6 +892,7 @@ async function play(){
   if(state.openPl) renderPlDetail(state.openPl);
   syncEqUI();
   setMediaSession(t);
+  updateBgBanner();
   countPlay(t);
 }
 
@@ -1016,6 +1018,7 @@ function switchPath(){
     audio.play().catch(function(e){ console.warn(e); });
   }
   setPlayIcon();
+  updateBgBanner();
 }
 
 /* Titelanzeige und Bedienknöpfe auf dem Sperrbildschirm. */
@@ -1056,9 +1059,21 @@ document.addEventListener("visibilitychange", function(){
 
 function showSilentWarning(){
   var w = $("silentWarn");
-  if(!w || w.dataset.shown) return;
-  w.dataset.shown = "1";
+  if(!w) return;
   w.style.display = "block";
+}
+
+/* Auf dem iPhone ist der Filterweg gleichbedeutend mit „stumm, sobald der
+   Bildschirm sperrt". Solange er aktiv ist, steht die Warnung sichtbar im
+   Player – nicht erst, nachdem es einmal schiefgegangen ist. */
+function updateBgBanner(){
+  var w = $("silentWarn");
+  if(!w) return;
+  var risky = IS_IOS && audio === audioA;
+  w.style.display = risky ? "block" : "none";
+  $("silentText").textContent = risky
+    ? "Achtung: Der Ton läuft über die Klangregelung. iOS friert die beim Sperren ein – dann spielt das Lied weiter, aber lautlos."
+    : "";
 }
 
 function applyEq(){
@@ -1404,9 +1419,29 @@ $("envInfo").textContent =
   " · " + location.protocol.replace(":", "") +
   " · Touch: " + (navigator.maxTouchPoints > 0 ? "ja" : "nein") +
   " · Filter: " + ($("file").getAttribute("accept") ? "an" : "aus");
+/* Laufend anzeigen, welchen Weg der Ton gerade nimmt. Genau diese Angaben
+   brauche ich, wenn etwas stumm bleibt – raten hilft hier nicht weiter. */
+function updatePath(){
+  var el = $("audioPath");
+  if(!el) return;
+  var t = state.queue[state.qi];
+  el.textContent =
+    "Weg:        " + (audio === audioA ? "audioA – durch die Klangregelung" : "audioB – direkt (hintergrundfähig)") + "\n" +
+    "AudioContext: " + (actx ? actx.state : "nicht angelegt") + "\n" +
+    "bg-Einstellung: " + (eqState.bg === null || eqState.bg === undefined ? "nicht gesetzt (Automatik)" : String(eqState.bg)) +
+      " → wirksam: " + bgPreferred() + "\n" +
+    "Klangregelung: " + (eqState.enabled ? "an" : "aus") + " (" + eqState.preset + ")\n" +
+    "iOS erkannt: " + IS_IOS + "\n" +
+    "Titel:      " + (t ? t.title + " · Quelle: " + t.source : "keiner") + "\n" +
+    "Zustand:    " + (audio.paused ? "pausiert" : "läuft") + " bei " + fmt(audio.currentTime) +
+      " · Lautstärke " + audio.volume + (audio.muted ? " · STUMMGESCHALTET" : "");
+}
+setInterval(function(){ updatePath(); updateBgBanner(); }, 1000);
+updatePath();
+
 $("diagCopy").onclick = function(){
   var txt = "Version " + BUILD + "\n" + $("envInfo").textContent + "\n" +
-            navigator.userAgent + "\n\n" + $("diag").textContent;
+            navigator.userAgent + "\n\n" + $("audioPath").textContent + "\n\n" + $("diag").textContent;
   if(navigator.clipboard && navigator.clipboard.writeText){
     navigator.clipboard.writeText(txt).then(function(){ $("diagCopy").textContent = "kopiert ✓"; });
   } else {
