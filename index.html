@@ -28,7 +28,7 @@ body{
   color:var(--txt);
   font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Ubuntu,Cantarell,"Helvetica Neue",Arial,sans-serif;
   -webkit-font-smoothing:antialiased;
-  padding-bottom:104px;
+  padding-bottom:150px;
 }
 button,input,select,textarea{font:inherit;color:inherit}
 button{cursor:pointer;border:0;background:none}
@@ -100,6 +100,15 @@ p.vs{color:var(--muted);font-size:13px;margin-bottom:16px}
 .drophint{display:block;margin-top:12px;font-size:12px;line-height:1.5}
 .hintline{font-size:12px;color:var(--muted);margin-top:10px;line-height:1.5}
 .sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+.presets{display:flex;flex-wrap:wrap;gap:8px}
+.preset{padding:9px 14px;border-radius:999px;background:var(--bg2);border:1px solid var(--line);font-size:13.5px;color:var(--muted)}
+.preset.active{background:linear-gradient(135deg,var(--acc),var(--acc2));color:#04211d;border-color:transparent;font-weight:600}
+.bandrow{display:flex;align-items:center;gap:10px;padding:7px 0}
+.blabel{flex:0 0 62px;font-size:12.5px;color:var(--muted)}
+.bandrow input[type=range]{flex:1;accent-color:var(--acc);min-width:0}
+.bval{flex:0 0 52px;text-align:right;font-size:12px;color:var(--txt);font-variant-numeric:tabular-nums}
+.switch{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);flex:0 0 auto}
+.switch input{accent-color:var(--acc);width:17px;height:17px}
 .diagbox{margin-top:14px;border-top:1px solid var(--line);padding-top:10px}
 .diagbox summary{font-size:12px;color:var(--muted);cursor:pointer}
 #diag{background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:10px;margin:8px 0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;line-height:1.6;color:var(--muted);white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto}
@@ -187,6 +196,7 @@ p.vs{color:var(--muted);font-size:13px;margin-bottom:16px}
     <button class="tab active" data-view="lib">Bibliothek</button>
     <button class="tab" data-view="fav">Favoriten</button>
     <button class="tab" data-view="pls">Playlists</button>
+    <button class="tab" data-view="eq">Klang</button>
     <button class="tab" data-view="add">Hinzufügen</button>
     <button class="tab" data-view="legal">Impressum</button>
   </nav>
@@ -238,6 +248,36 @@ p.vs{color:var(--muted);font-size:13px;margin-bottom:16px}
   </section>
 
   <!-- Hinzufügen -->
+  <!-- Klang -->
+  <section class="view" id="v-eq">
+    <h2 class="vt">Klang</h2>
+    <p class="vs">Sechs Frequenzbänder, entweder über eine Voreinstellung oder von Hand.</p>
+
+    <div class="card">
+      <h3>Voreinstellungen <span id="eqNow" style="font-weight:400;color:var(--muted);font-size:12px"></span></h3>
+      <div class="presets" id="presets"></div>
+    </div>
+
+    <div class="card">
+      <h3>Bänder</h3>
+      <div id="bands"></div>
+      <div class="bandrow" style="border-top:1px solid var(--line);padding-top:12px;margin-top:4px">
+        <span class="blabel">Vorverstärkung</span>
+        <input type="range" id="preamp" min="-12" max="6" step="0.5" value="0">
+        <span class="bval" id="preampVal">0 dB</span>
+      </div>
+      <p class="hintline" id="clipHint">Bei kräftigen Anhebungen die Vorverstärkung senken, sonst übersteuert das Signal hörbar.</p>
+      <div class="row" style="margin-top:12px">
+        <button class="btn ghost small" id="eqFlat">Zurücksetzen</button>
+        <label class="switch"><input type="checkbox" id="eqEnable" checked> Klangregelung aktiv</label>
+      </div>
+    </div>
+
+    <div class="card" id="eqNote" style="display:none">
+      <p class="hintline" style="margin:0">Der gerade laufende Titel ist ein Link auf einen fremden Server. Solche Dateien lassen sich nicht durch die Klangregelung leiten – sie würden dabei verstummen. Für hochgeladene Dateien greift der Equalizer normal.</p>
+    </div>
+  </section>
+
   <section class="view" id="v-add">
     <h2 class="vt">Songs hinzufügen</h2>
     <p class="vs">Dateien landen im privaten Supabase-Storage, Links werden nur als Adresse gespeichert.</p>
@@ -304,7 +344,7 @@ p.vs{color:var(--muted);font-size:13px;margin-bottom:16px}
         <button class="pbtn play" id="bPlay" title="Play/Pause">▶</button>
         <button class="pbtn" id="bNext" title="Weiter">⏭</button>
         <button class="pbtn" id="bRepeat" title="Wiederholen">↻</button>
-        <button class="pbtn on" id="bEq" title="Equalizer ein/aus" aria-label="Equalizer ein- oder ausschalten"><svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><g fill="currentColor"><rect x="1" y="9" width="2.6" height="6" rx="1.3"/><rect x="5.1" y="4" width="2.6" height="11" rx="1.3"/><rect x="9.2" y="1" width="2.6" height="14" rx="1.3"/><rect x="13.3" y="7" width="2.6" height="8" rx="1.3"/></g></svg></button>
+        <button class="pbtn on" id="bEq" title="Visualisierung ein/aus" aria-label="Visualisierung ein- oder ausschalten"><svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><g fill="currentColor"><rect x="1" y="9" width="2.6" height="6" rx="1.3"/><rect x="5.1" y="4" width="2.6" height="11" rx="1.3"/><rect x="9.2" y="1" width="2.6" height="14" rx="1.3"/><rect x="13.3" y="7" width="2.6" height="8" rx="1.3"/></g></svg></button>
       </div>
       <div class="vol">
         <span style="color:var(--muted);font-size:13px">🔊</span>
@@ -346,7 +386,7 @@ var LEGAL = {
   paypal: "https://www.paypal.com/paypalme/AlexanderGlauche"
 };
 
-var BUILD = "2026-09-19 04:12";
+var BUILD = "2026-09-19 04:28";
 
 /* Protokolliert die Upload-Schritte sichtbar in der App. Am Handy gibt es
    keine Entwicklerkonsole – ohne das bliebe jeder Fehlschlag unsichtbar. */
@@ -839,6 +879,7 @@ async function play(){
   $("pCover").innerHTML = t.cover_url ? '<img src="'+esc(t.cover_url)+'" alt="">' : "♪";
   renderLib(); renderFav();
   if(state.openPl) renderPlDetail(state.openPl);
+  syncEqUI();
   countPlay(t);
 }
 
@@ -856,11 +897,37 @@ function stop(){
 }
 
 /* =======================================================
-   Equalizer
+   Klangregelung + Visualisierung
    ======================================================= */
 var actx = null, analyser = null, eqData = null, eqRAF = null;
 var eqOn = true, eqPhase = 0;
 var eqc = $("eq"), ectx = eqc.getContext("2d");
+
+/* Sechs Bänder: das unterste als Kuhschelle (alles darunter mit angehoben),
+   das oberste ebenso nach oben, dazwischen Glockenfilter. */
+var BANDS = [
+  { f:60,    type:"lowshelf",  label:"60 Hz" },
+  { f:170,   type:"peaking",   label:"170 Hz" },
+  { f:600,   type:"peaking",   label:"600 Hz" },
+  { f:2000,  type:"peaking",   label:"2 kHz" },
+  { f:6000,  type:"peaking",   label:"6 kHz" },
+  { f:12000, type:"highshelf", label:"12 kHz" }
+];
+
+var PRESETS = [
+  { name:"Neutral",   g:[0, 0, 0, 0, 0, 0],       pre:0 },
+  { name:"Pop",       g:[-1, 4, 6, 3, -1, -2],    pre:-3 },
+  { name:"Rock",      g:[6, 4, -4, 0, 5, 7],      pre:-4 },
+  { name:"Bass",      g:[9, 6, 1, 0, 0, 0],       pre:-5 },
+  { name:"Höhen",     g:[-2, -1, 0, 2, 6, 8],     pre:-4 },
+  { name:"Klassik",   g:[4, 2, -1, 0, 3, 4],      pre:-2 },
+  { name:"Elektro",   g:[7, 4, -3, 1, 5, 7],      pre:-4 },
+  { name:"Stimme",    g:[-4, -2, 3, 5, 2, -2],    pre:-2 },
+  { name:"Nachts",    g:[3, 1, 1, 2, -2, -4],     pre:-1 }
+];
+
+var eqFilters = [], preampNode = null;
+var eqState = { gains:[0,0,0,0,0,0], pre:0, preset:"Neutral", enabled:true };
 
 function initGraph(){
   if(actx || !window.AudioContext && !window.webkitAudioContext) return;
@@ -868,13 +935,141 @@ function initGraph(){
     var AC = window.AudioContext || window.webkitAudioContext;
     actx = new AC();
     var srcNode = actx.createMediaElementSource(audioA);
+
+    preampNode = actx.createGain();
+    eqFilters = BANDS.map(function(b){
+      var f = actx.createBiquadFilter();
+      f.type = b.type;
+      f.frequency.value = b.f;
+      if(b.type === "peaking") f.Q.value = 1.1;
+      f.gain.value = 0;
+      return f;
+    });
+
     analyser = actx.createAnalyser();
     analyser.fftSize = 512;
     analyser.smoothingTimeConstant = 0.75;
-    srcNode.connect(analyser);
+
+    /* Quelle → Vorverstärkung → sechs Filter in Reihe → Analyse → Ausgabe.
+       Der Analyser sitzt am Ende, die Anzeige zeigt also den geregelten Klang. */
+    var node = srcNode.connect(preampNode);
+    eqFilters.forEach(function(f){ node = node.connect(f); });
+    node.connect(analyser);
     analyser.connect(actx.destination);
+
     eqData = new Uint8Array(analyser.frequencyBinCount);
+    applyEq();
   }catch(e){ console.warn("Web Audio nicht verfügbar:", e); actx = null; analyser = null; }
+}
+
+function dbToGain(db){ return Math.pow(10, db / 20); }
+
+function applyEq(){
+  if(!actx) return;
+  var on = eqState.enabled;
+  eqFilters.forEach(function(f, i){
+    var v = on ? eqState.gains[i] : 0;
+    /* Sanft überblenden statt springen – harte Sprünge knacken hörbar. */
+    f.gain.setTargetAtTime(v, actx.currentTime, 0.02);
+  });
+  preampNode.gain.setTargetAtTime(dbToGain(on ? eqState.pre : 0), actx.currentTime, 0.02);
+}
+
+function saveEq(){
+  try{ localStorage.setItem("ps_eq", JSON.stringify(eqState)); }catch(e){}
+}
+function loadEqState(){
+  try{
+    var s = JSON.parse(localStorage.getItem("ps_eq") || "null");
+    if(s && s.gains && s.gains.length === BANDS.length) eqState = s;
+  }catch(e){}
+}
+
+function buildEqUI(){
+  loadEqState();
+
+  var pc = $("presets");
+  PRESETS.forEach(function(p){
+    var b = document.createElement("button");
+    b.className = "preset";
+    b.type = "button";
+    b.textContent = p.name;
+    b.onclick = function(){
+      eqState.gains = p.g.slice();
+      eqState.pre = p.pre;
+      eqState.preset = p.name;
+      eqState.enabled = true;
+      $("eqEnable").checked = true;
+      syncEqUI(); applyEq(); saveEq();
+    };
+    pc.appendChild(b);
+  });
+
+  var bc = $("bands");
+  BANDS.forEach(function(b, i){
+    var row = document.createElement("div");
+    row.className = "bandrow";
+    row.innerHTML = '<span class="blabel">'+b.label+'</span>' +
+      '<input type="range" min="-12" max="12" step="0.5" value="0" aria-label="'+b.label+'">' +
+      '<span class="bval">0.0 dB</span>';
+    var sl = row.querySelector("input");
+    sl.oninput = function(){
+      eqState.gains[i] = parseFloat(sl.value);
+      eqState.preset = matchPreset();
+      syncEqUI(); applyEq(); saveEq();
+    };
+    bc.appendChild(row);
+  });
+
+  $("preamp").oninput = function(){
+    eqState.pre = parseFloat(this.value);
+    eqState.preset = matchPreset();
+    syncEqUI(); applyEq(); saveEq();
+  };
+  $("eqEnable").onchange = function(){
+    eqState.enabled = this.checked;
+    syncEqUI(); applyEq(); saveEq();
+  };
+  $("eqFlat").onclick = function(){
+    eqState = { gains:[0,0,0,0,0,0], pre:0, preset:"Neutral", enabled:true };
+    $("eqEnable").checked = true;
+    syncEqUI(); applyEq(); saveEq();
+  };
+
+  syncEqUI();
+}
+
+/* Passen die Regler exakt zu einer Voreinstellung, wird die wieder markiert –
+   sonst steht die Klangregelung auf „Eigene". */
+function matchPreset(){
+  for(var i = 0; i < PRESETS.length; i++){
+    var p = PRESETS[i], same = p.pre === eqState.pre;
+    for(var k = 0; same && k < p.g.length; k++) if(p.g[k] !== eqState.gains[k]) same = false;
+    if(same) return p.name;
+  }
+  return "Eigene";
+}
+
+function syncEqUI(){
+  var rows = $("bands").querySelectorAll(".bandrow");
+  eqState.gains.forEach(function(g, i){
+    if(!rows[i]) return;
+    rows[i].querySelector("input").value = g;
+    rows[i].querySelector(".bval").textContent = (g > 0 ? "+" : "") + g.toFixed(1) + " dB";
+  });
+  $("preamp").value = eqState.pre;
+  $("preampVal").textContent = (eqState.pre > 0 ? "+" : "") + eqState.pre.toFixed(1) + " dB";
+  $("eqEnable").checked = eqState.enabled;
+  $("presets").querySelectorAll(".preset").forEach(function(b){
+    b.classList.toggle("active", b.textContent === eqState.preset);
+  });
+  $("eqNow").textContent = "· aktiv: " + eqState.preset + (eqState.enabled ? "" : " (ausgeschaltet)");
+  var peak = Math.max.apply(null, eqState.gains) + eqState.pre;
+  $("clipHint").textContent = peak > 4
+    ? "Achtung: " + peak.toFixed(1) + " dB Spitzenanhebung – das kann übersteuern. Vorverstärkung weiter senken."
+    : "Bei kräftigen Anhebungen die Vorverstärkung senken, sonst übersteuert das Signal hörbar.";
+  var t = state.queue[state.qi];
+  $("eqNote").style.display = (t && t.source === "url") ? "block" : "none";
 }
 
 /* Balken i auf einen FFT-Bin abbilden – logarithmisch von 40 Hz bis 14 kHz,
@@ -1064,6 +1259,8 @@ $("legalBody").innerHTML =
 
   '<h3>Haftung für Links</h3>' +
   '<p>Externe Links – dazu zählen auch selbst hinterlegte Song-URLs – führen zu Inhalten fremder Anbieter, für die ausschließlich deren Betreiber verantwortlich sind. Zum Zeitpunkt der Verlinkung waren keine Rechtsverstöße erkennbar. Bei Bekanntwerden von Rechtsverletzungen werden entsprechende Links entfernt.</p>';
+
+buildEqUI();
 
 /* Versions- und Umgebungsanzeige für die Fehlersuche */
 $("buildTag").textContent = BUILD;
