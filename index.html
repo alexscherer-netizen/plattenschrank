@@ -332,6 +332,10 @@ p.vs{color:var(--muted);font-size:13px;margin-bottom:16px}
 <!-- ========== PLAYER ========== -->
 <div id="player">
   <div class="pwrap">
+    <div id="silentWarn" style="display:none;background:#3b2a14;border:1px solid #7a5520;border-radius:10px;padding:9px 11px;margin-bottom:8px;font-size:12px;line-height:1.5;color:#f0d4a0">
+      Bei gesperrtem Bildschirm kam kein Ton – die Klangregelung wird von iOS dabei eingefroren.
+      <button class="linkbtn" id="silentFix" type="button" style="font-size:12px;color:#ffd48a;padding:0 0 0 4px">Hintergrundwiedergabe einschalten</button>
+    </div>
     <div class="eqwrap" id="eqwrap"><canvas id="eq" aria-hidden="true"></canvas></div>
     <div class="seek">
       <span id="tCur">0:00</span>
@@ -392,7 +396,7 @@ var LEGAL = {
   paypal: "https://www.paypal.com/paypalme/AlexanderGlauche"
 };
 
-var BUILD = "2026-09-19 04:40";
+var BUILD = "2026-09-19 04:52";
 
 /* Protokolliert die Upload-Schritte sichtbar in der App. Am Handy gibt es
    keine Entwicklerkonsole – ohne das bliebe jeder Fehlschlag unsichtbar. */
@@ -944,7 +948,11 @@ var eqState = { gains:[0,0,0,0,0,0], pre:0, preset:"Neutral", enabled:true, bg:n
 var IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
              (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 
-function bgPreferred(){ return eqState.bg === null ? IS_IOS : eqState.bg; }
+/* `== null` fängt null und undefined gemeinsam ab. Ein strenger Vergleich auf
+   null allein würde eine gespeicherte Einstellung aus einer älteren Fassung,
+   die dieses Feld noch nicht kannte, als „aus" werten – und das iPhone damit
+   entgegen der Absicht in die Filterkette schicken. */
+function bgPreferred(){ return eqState.bg == null ? IS_IOS : eqState.bg === true; }
 
 /* Nur wenn beides zusammenpasst, darf der Titel durch die Filterkette. */
 function useGraphFor(t){
@@ -1029,12 +1037,29 @@ function setMediaSession(t){
   }catch(e){ console.warn("MediaSession:", e); }
 }
 
-/* Nach dem Entsperren den Kontext wiederbeleben, damit es weitergeht. */
+/* Nach dem Entsperren den Kontext wiederbeleben – und merken, ob er während
+   der Sperre eingefroren war, während der Titel weiterlief. Genau dann lief
+   das Lied ohne Ton, und das soll die App von sich aus sagen, statt es den
+   Nutzer im Dunkeln herausfinden zu lassen. */
+var wasMutedInBg = false;
 document.addEventListener("visibilitychange", function(){
-  if(document.visibilityState === "visible" && actx && actx.state === "suspended"){
-    actx.resume().catch(function(){});
+  if(document.visibilityState === "hidden"){
+    if(audio === audioA && !audio.paused) wasMutedInBg = true;
+    return;
   }
+  if(actx && actx.state === "suspended"){
+    actx.resume().catch(function(){});
+    if(wasMutedInBg) showSilentWarning();
+  }
+  wasMutedInBg = false;
 });
+
+function showSilentWarning(){
+  var w = $("silentWarn");
+  if(!w || w.dataset.shown) return;
+  w.dataset.shown = "1";
+  w.style.display = "block";
+}
 
 function applyEq(){
   if(!actx) return;
@@ -1053,7 +1078,12 @@ function saveEq(){
 function loadEqState(){
   try{
     var s = JSON.parse(localStorage.getItem("ps_eq") || "null");
-    if(s && s.gains && s.gains.length === BANDS.length) eqState = s;
+    if(s && s.gains && s.gains.length === BANDS.length){
+      eqState = s;
+      /* Gespeicherte Stände älterer Fassungen auf den aktuellen Aufbau heben. */
+      if(!("bg" in eqState) || eqState.bg === undefined) eqState.bg = null;
+      if(typeof eqState.enabled !== "boolean") eqState.enabled = true;
+    }
   }catch(e){}
 }
 
@@ -1360,6 +1390,12 @@ $("legalBody").innerHTML =
   '<p>Externe Links – dazu zählen auch selbst hinterlegte Song-URLs – führen zu Inhalten fremder Anbieter, für die ausschließlich deren Betreiber verantwortlich sind. Zum Zeitpunkt der Verlinkung waren keine Rechtsverstöße erkennbar. Bei Bekanntwerden von Rechtsverletzungen werden entsprechende Links entfernt.</p>';
 
 buildEqUI();
+
+$("silentFix").onclick = function(){
+  eqState.bg = true;
+  $("silentWarn").style.display = "none";
+  syncEqUI(); saveEq(); switchPath();
+};
 
 /* Versions- und Umgebungsanzeige für die Fehlersuche */
 $("buildTag").textContent = BUILD;
