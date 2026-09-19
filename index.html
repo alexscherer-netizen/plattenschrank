@@ -280,13 +280,13 @@ p.vs{color:var(--muted);font-size:13px;margin-bottom:16px}
     </div>
 
     <div class="card" id="eqNote" style="display:none">
-      <p class="hintline" style="margin:0">Der gerade laufende Titel ist ein Link auf einen fremden Server. Solche Dateien lassen sich nicht durch die Klangregelung leiten – sie würden dabei verstummen. Für hochgeladene Dateien greift der Equalizer normal.</p>
+      <p class="hintline" style="margin:0">Der gerade laufende Titel kommt von einem fremden Server oder aus dem SoundCloud-Player. Solche Quellen lassen sich nicht durch die Klangregelung leiten. Für hochgeladene Dateien greift der Equalizer normal.</p>
     </div>
   </section>
 
   <section class="view" id="v-add">
     <h2 class="vt">Songs hinzufügen</h2>
-    <p class="vs">Dateien landen im privaten Supabase-Storage, Links werden nur als Adresse gespeichert.</p>
+    <p class="vs">Dateien landen im privaten Supabase-Storage. Links werden als Adresse gespeichert, SoundCloud-Titel über den offiziellen Player eingebunden.</p>
 
     <div class="card">
       <h3>Dateien hochladen</h3>
@@ -312,8 +312,8 @@ p.vs{color:var(--muted);font-size:13px;margin-bottom:16px}
 
     <div class="card">
       <h3>Song per Link</h3>
-      <div class="field"><label for="uUrl">Audio-URL (direkter Link auf die Datei)</label>
-        <input type="url" id="uUrl" placeholder="https://…/song.mp3"></div>
+      <div class="field"><label for="uUrl">Audio-URL oder SoundCloud-Adresse</label>
+        <input type="url" id="uUrl" placeholder="https://…/song.mp3 oder soundcloud.com/kuenstler/titel"></div>
       <div class="row" style="margin-bottom:10px">
         <input type="text" id="uTitle" placeholder="Titel *">
         <input type="text" id="uArtist" placeholder="Interpret">
@@ -340,11 +340,20 @@ p.vs{color:var(--muted);font-size:13px;margin-bottom:16px}
     <div id="silentWarn" style="display:none;background:#3b2a14;border:1px solid #7a5520;border-radius:10px;padding:9px 11px;margin-bottom:8px;font-size:12px;line-height:1.5;color:#f0d4a0">
       <span id="silentText">Bei gesperrtem Bildschirm kam kein Ton – die Klangregelung wird von iOS dabei eingefroren.</span>
     </div>
+    <div id="errBar" style="display:none;background:#3b1418;border:1px solid #6b2027;border-radius:10px;padding:9px 11px;margin-bottom:8px;font-size:12.5px;line-height:1.5;color:#ffb4b4">
+      <span id="errText"></span>
+      <button class="linkbtn" id="errClose" type="button" style="font-size:12.5px;color:#ffb4b4;padding:0 0 0 6px">Schließen</button>
+    </div>
     <div id="resumeBar" style="display:none;background:#11302c;border:1px solid #1d5b4c;border-radius:10px;padding:9px 11px;margin-bottom:8px;font-size:12.5px;line-height:1.5;color:#9ff0da">
       <span id="resumeText"></span>
       <button class="linkbtn" id="resumeGo" type="button" style="font-size:12.5px;padding:0 0 0 6px">Weiterhören</button>
       <button class="linkbtn" id="resumeNo" type="button" style="font-size:12.5px;color:var(--muted);padding:0 0 0 6px">Verwerfen</button>
       <button class="linkbtn" id="silentFix" type="button" style="font-size:12px;color:#ffd48a;padding:0 0 0 4px">Hintergrundwiedergabe einschalten</button>
+    </div>
+    <div id="scWrap" style="display:none;margin-bottom:8px">
+      <iframe id="scFrame" width="100%" height="120" frameborder="0" scrolling="no"
+              allow="autoplay" title="SoundCloud-Player"
+              style="border:0;border-radius:10px;display:block"></iframe>
     </div>
     <div class="eqwrap" id="eqwrap"><canvas id="eq" aria-hidden="true"></canvas></div>
     <div class="seek">
@@ -406,7 +415,7 @@ var LEGAL = {
   paypal: "https://www.paypal.com/paypalme/AlexanderGlauche"
 };
 
-var BUILD = "2026-09-19 05:26";
+var BUILD = "2026-09-19 12:55";
 
 /* Protokolliert die Upload-Schritte sichtbar in der App. Am Handy gibt es
    keine Entwicklerkonsole – ohne das bliebe jeder Fehlschlag unsichtbar. */
@@ -539,7 +548,8 @@ function trackNode(t, list, idx, inPl){
   el.innerHTML =
     '<div class="cover">'+cov+'</div>' +
     '<div class="tinfo">' +
-      '<div class="t">'+esc(t.title)+'<span class="badge">'+(t.source === "storage" ? "Datei" : "Link")+'</span></div>' +
+      '<div class="t">'+esc(t.title)+'<span class="badge">'+
+        (t.source === "storage" ? "Datei" : t.source === "soundcloud" ? "SoundCloud" : "Link")+'</span></div>' +
       '<div class="a">'+esc(t.artist || "Unbekannt")+(t.album ? " · " + esc(t.album) : "")+(t.duration ? " · " + fmt(t.duration) : "")+'</div>' +
     '</div>' +
     '<div class="tact">' +
@@ -841,17 +851,64 @@ function readDuration(file){
   });
 }
 
+/* Seiten, die wie Musik aussehen, aber Webseiten sind. Ein Audio-Element
+   kann sie nicht abspielen – das soll beim Speichern gesagt werden, nicht
+   erst beim stummen Scheitern. */
+var PORTALE = [
+  { muster:/youtube\.com|youtu\.be/i,     name:"YouTube" },
+  { muster:/open\.spotify\.com|spotify:/i, name:"Spotify" },
+  { muster:/music\.apple\.com/i,           name:"Apple Music" },
+  { muster:/deezer\.com|tidal\.com|bandcamp\.com/i, name:"dieser Dienst" },
+  { muster:/vimeo\.com|dailymotion\.com/i, name:"diese Videoseite" }
+];
+var AUDIO_ENDUNG = /\.(mp3|m4a|mp4|aac|flac|ogg|oga|opus|wav|wma|aiff?)(\?.*)?$/i;
+
+function pruefeUrl(url){
+  if(!/^https?:\/\//i.test(url)) return "Die Adresse muss mit http:// oder https:// beginnen.";
+  for(var i = 0; i < PORTALE.length; i++){
+    if(PORTALE[i].muster.test(url)){
+      return "Das ist ein Link auf eine Seite von " + PORTALE[i].name +
+             ", keine Audiodatei. Ein Browser kann daraus keinen Ton abspielen. " +
+             "Nötig ist ein direkter Link, der auf .mp3, .m4a, .ogg o. ä. endet – " +
+             "oder du lädst die Datei oben hoch.";
+    }
+  }
+  if(!AUDIO_ENDUNG.test(url)){
+    return "WARNUNG: Die Adresse endet nicht auf eine bekannte Audio-Endung. " +
+           "Wenn dahinter trotzdem eine Audiodatei liegt, tippe erneut auf „Hinzufügen“ zum Bestätigen.";
+  }
+  return null;
+}
+
+var SC_MUSTER = /^https?:\/\/(www\.|m\.)?soundcloud\.com\/[^\/]+\/[^\/?#]+/i;
+function istSoundCloud(url){ return SC_MUSTER.test(url); }
+
+var urlBestaetigt = "";
+
 $("uAdd").onclick = async function(){
   var m = $("uMsg");
   var url = $("uUrl").value.trim(), title = $("uTitle").value.trim();
   if(!url || !title){ m.className = "msg err"; m.textContent = "URL und Titel sind Pflicht."; return; }
+
+  var sc_ = istSoundCloud(url);
+  var problem = sc_ ? null : pruefeUrl(url);
+  if(problem){
+    var nurWarnung = problem.indexOf("WARNUNG") === 0;
+    if(!nurWarnung || urlBestaetigt !== url){
+      if(nurWarnung) urlBestaetigt = url;
+      m.className = "msg err";
+      m.textContent = problem;
+      return;
+    }
+  }
   var r = await sb.from("mp_tracks").insert({
     user_id:state.user.id, title:title, artist:$("uArtist").value.trim(),
     album:$("uAlbum").value.trim(), cover_url:$("uCover").value.trim() || null,
-    source:"url", url:url
+    source: sc_ ? "soundcloud" : "url", url:url
   });
   if(r.error){ m.className = "msg err"; m.textContent = r.error.message; return; }
-  m.className = "msg ok"; m.textContent = "Gespeichert.";
+  m.className = "msg ok";
+  m.textContent = sc_ ? "Als SoundCloud-Titel gespeichert." : "Gespeichert.";
   ["uUrl","uTitle","uArtist","uAlbum","uCover"].forEach(function(id){ $(id).value = ""; });
   loadTracks();
 };
@@ -878,6 +935,10 @@ function setQueue(list, idx){
 async function play(){
   var t = state.queue[state.qi];
   if(!t) return;
+
+  if(t.source === "soundcloud"){ playSoundCloud(t); return; }
+  scStop();
+
   var src = await srcFor(t);
   if(!src) return;
 
@@ -890,11 +951,16 @@ async function play(){
   }
   audio.volume = parseFloat($("vol").value);
   audio.src = src;
+  $("errBar").style.display = "none";
   parkIdleElement();
   applyPendingSeek();
   if(audio === audioA) initGraph();
   if(actx && actx.state === "suspended") actx.resume();
-  audio.play().catch(function(e){ console.warn(e); });
+  audio.play().catch(function(e){
+    console.warn(e);
+    if(e && e.name === "NotAllowedError") return;   /* Autoplay-Sperre, kein Quellenfehler */
+    playbackError(t, quellenHinweis(t));
+  });
   $("player").style.display = "block";
   startEq();
   $("pTitle").textContent = t.title;
@@ -916,6 +982,7 @@ async function countPlay(t){
 
 function stop(){
   [audioA, audioB].forEach(function(el){ el.pause(); el.removeAttribute("src"); el.load(); });
+  scStop();
   state.queue = []; state.qi = -1;
   stopEq();
   $("player").style.display = "none";
@@ -1062,6 +1129,125 @@ function setSessionState(st){
       });
     }
   }catch(e){}
+}
+
+/* =======================================================
+   SoundCloud
+   Der offizielle Widget-Player wird als Rahmen eingebettet und von
+   außen ferngesteuert. Das ist der von SoundCloud vorgesehene Weg:
+   die Wiedergabe zählt beim Künstler, und es wird nichts umgangen.
+   Einen Schlüssel braucht es dafür nicht.
+   ======================================================= */
+var sc = { widget:null, ready:false, dauer:0, laeuft:false, apiGeladen:false };
+
+function scAktiv(){ var t = state.queue[state.qi]; return !!(t && t.source === "soundcloud"); }
+
+function ladeScApi(){
+  return new Promise(function(fertig, fehler){
+    if(window.SC && window.SC.Widget){ sc.apiGeladen = true; return fertig(); }
+    var s = document.createElement("script");
+    s.src = "https://w.soundcloud.com/player/api.js";
+    s.onload = function(){ sc.apiGeladen = true; fertig(); };
+    s.onerror = function(){ fehler(new Error("Widget-Api nicht erreichbar")); };
+    document.head.appendChild(s);
+  });
+}
+
+async function playSoundCloud(t){
+  /* Das Audio-Element muss schweigen, sonst laufen zwei Quellen parallel. */
+  try{ audioA.pause(); audioB.pause(); }catch(e){}
+  stopEq();
+
+  $("player").style.display = "block";
+  $("errBar").style.display = "none";
+  $("scWrap").style.display = "block";
+  $("eqwrap").style.display = "none";
+  document.body.style.paddingBottom = "270px";
+  $("pTitle").textContent = t.title;
+  $("pArtist").textContent = (t.artist || "SoundCloud") + (t.album ? " · " + t.album : "");
+  $("pCover").innerHTML = t.cover_url ? '<img src="'+esc(t.cover_url)+'" alt="">' : "☁";
+  renderLib(); renderFav();
+  if(state.openPl) renderPlDetail(state.openPl);
+  syncEqUI();
+
+  try{ await ladeScApi(); }
+  catch(e){ playbackError(t, "Der SoundCloud-Player konnte nicht geladen werden. Besteht eine Internetverbindung?"); return; }
+
+  var rahmen = $("scFrame");
+  rahmen.src = "https://w.soundcloud.com/player/?url=" + encodeURIComponent(t.url) +
+               "&auto_play=true&hide_related=true&show_comments=false" +
+               "&show_user=true&show_reposts=false&visual=false&color=%2314b8a6";
+
+  sc.widget = SC.Widget(rahmen);
+  sc.ready = false;
+
+  sc.widget.bind(SC.Widget.Events.READY, function(){
+    sc.ready = true;
+    sc.widget.setVolume(parseFloat($("vol").value) * 100);
+    sc.widget.getDuration(function(ms){
+      sc.dauer = ms / 1000;
+      $("tDur").textContent = fmt(sc.dauer);
+      if(!t.duration){
+        t.duration = Math.round(sc.dauer);
+        sb.from("mp_tracks").update({ duration:t.duration }).eq("id", t.id);
+      }
+    });
+    setMediaSession(t);
+  });
+
+  sc.widget.bind(SC.Widget.Events.PLAY, function(){
+    sc.laeuft = true; $("bPlay").textContent = "⏸"; setSessionState("playing");
+  });
+  sc.widget.bind(SC.Widget.Events.PAUSE, function(){
+    sc.laeuft = false; $("bPlay").textContent = "▶"; setSessionState("paused");
+  });
+  sc.widget.bind(SC.Widget.Events.FINISH, function(){
+    sc.laeuft = false; next(true);
+  });
+  sc.widget.bind(SC.Widget.Events.PLAY_PROGRESS, function(d){
+    var pos = (d.currentPosition || 0) / 1000;
+    $("tCur").textContent = fmt(pos);
+    if(sc.dauer) $("seekFill").style.width = (pos / sc.dauer * 100) + "%";
+  });
+  sc.widget.bind(SC.Widget.Events.ERROR, function(){
+    playbackError(t, "SoundCloud hat den Titel abgelehnt. Möglich ist, dass er privat ist oder das Einbetten nicht erlaubt.");
+  });
+
+  countPlay(t);
+}
+
+function scStop(){
+  if(sc.widget){
+    try{ sc.widget.pause(); }catch(e){}
+    sc.widget = null;
+  }
+  sc.ready = false; sc.laeuft = false; sc.dauer = 0;
+  var r = $("scFrame");
+  if(r) r.removeAttribute("src");
+  $("scWrap").style.display = "none";
+  $("eqwrap").style.display = "";
+  document.body.style.paddingBottom = "";
+}
+
+/* Ein nicht abspielbarer Titel soll es sagen, statt stumm liegenzubleiben. */
+function playbackError(t, detail){
+  var w = $("errBar");
+  if(w){
+    $("errText").textContent =
+      (t ? t.title + ": " : "") + "lässt sich nicht abspielen. " + detail;
+    w.style.display = "block";
+  }
+  diag("ABSPIELFEHLER: " + (t ? t.title : "?") + " – " + detail);
+}
+
+function quellenHinweis(t){
+  if(!t) return "Unbekannte Quelle.";
+  if(t.source === "url"){
+    var p = pruefeUrl(t.url || "");
+    if(p && p.indexOf("WARNUNG") !== 0) return p;
+    return "Der Server liefert die Datei nicht ab, oder das Format wird nicht unterstützt.";
+  }
+  return "Die Datei im Speicher ist nicht erreichbar.";
 }
 
 /* Titelanzeige und Bedienknöpfe auf dem Sperrbildschirm. */
@@ -1233,6 +1419,7 @@ function updateBgBanner(){
   var w = $("silentWarn");
   if(!w) return;
   var risky = IS_IOS && audio === audioA;
+  if(risky) $("silentFix").style.display = "";
   w.style.display = risky ? "block" : "none";
   $("silentText").textContent = risky
     ? "Achtung: Der Ton läuft über die Klangregelung. iOS friert die beim Sperren ein – dann spielt das Lied weiter, aber lautlos."
@@ -1376,7 +1563,7 @@ function syncEqUI(){
     ? "Achtung: " + peak.toFixed(1) + " dB Spitzenanhebung – das kann übersteuern. Vorverstärkung weiter senken."
     : "Bei kräftigen Anhebungen die Vorverstärkung senken, sonst übersteuert das Signal hörbar.";
   var t = state.queue[state.qi];
-  $("eqNote").style.display = (t && t.source === "url") ? "block" : "none";
+  $("eqNote").style.display = (t && t.source !== "storage") ? "block" : "none";
 }
 
 /* Balken i auf einen FFT-Bin abbilden – logarithmisch von 40 Hz bis 14 kHz,
@@ -1468,7 +1655,10 @@ $("bEq").onclick = function(){
 
 function next(auto){
   if(!state.queue.length) return;
-  if(state.repeat === "one" && auto){ audio.currentTime = 0; audio.play(); return; }
+  if(state.repeat === "one" && auto){
+    if(scAktiv()){ if(sc.widget){ sc.widget.seekTo(0); sc.widget.play(); } return; }
+    audio.currentTime = 0; audio.play(); return;
+  }
   if(state.shuffle){
     state.qi = Math.floor(Math.random() * state.queue.length);
   } else if(state.qi + 1 < state.queue.length){
@@ -1482,6 +1672,10 @@ function next(auto){
 }
 function prev(){
   if(!state.queue.length) return;
+  if(scAktiv()){
+    state.qi = state.qi > 0 ? state.qi - 1 : state.queue.length - 1;
+    play(); return;
+  }
   if(audio.currentTime > 4){ audio.currentTime = 0; return; }
   state.qi = state.qi > 0 ? state.qi - 1 : state.queue.length - 1;
   play();
@@ -1489,6 +1683,7 @@ function prev(){
 
 $("bPlay").onclick = function(){
   if(!state.queue.length){ var l = filtered(); if(l.length) setQueue(l, 0); return; }
+  if(scAktiv()){ if(sc.widget) sc.widget.toggle(); return; }
   if(audio.paused) audio.play(); else audio.pause();
 };
 $("bNext").onclick = function(){ next(false); };
@@ -1516,6 +1711,11 @@ function setPlayIcon(){ $("bPlay").textContent = audio.paused ? "▶" : "⏸"; }
       saveNowPlaying();
     }
   };
+  el.onerror = function(){
+    if(el !== audio) return;
+    var t = state.queue[state.qi];
+    playbackError(t, quellenHinweis(t));
+  };
   el.onloadedmetadata = async function(){
     if(el !== audio) return;
     $("tDur").textContent = fmt(el.duration);
@@ -1528,11 +1728,20 @@ function setPlayIcon(){ $("bPlay").textContent = audio.paused ? "▶" : "⏸"; }
 });
 
 $("seekBar").onclick = function(e){
-  if(!audio.duration) return;
   var r = this.getBoundingClientRect();
-  audio.currentTime = (e.clientX - r.left) / r.width * audio.duration;
+  var anteil = (e.clientX - r.left) / r.width;
+  if(scAktiv()){
+    if(sc.widget && sc.dauer) sc.widget.seekTo(anteil * sc.dauer * 1000);
+    return;
+  }
+  if(!audio.duration) return;
+  audio.currentTime = anteil * audio.duration;
 };
-$("vol").oninput = function(){ audioA.volume = audioB.volume = parseFloat(this.value); };
+$("vol").oninput = function(){
+  var v = parseFloat(this.value);
+  audioA.volume = audioB.volume = v;
+  if(sc.widget) try{ sc.widget.setVolume(v * 100); }catch(e){}
+};
 
 document.addEventListener("keydown", function(e){
   if(/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) return;
@@ -1576,6 +1785,8 @@ $("legalBody").innerHTML =
   '<p>Externe Links – dazu zählen auch selbst hinterlegte Song-URLs – führen zu Inhalten fremder Anbieter, für die ausschließlich deren Betreiber verantwortlich sind. Zum Zeitpunkt der Verlinkung waren keine Rechtsverstöße erkennbar. Bei Bekanntwerden von Rechtsverletzungen werden entsprechende Links entfernt.</p>';
 
 buildEqUI();
+
+$("errClose").onclick = function(){ $("errBar").style.display = "none"; };
 
 $("silentFix").onclick = function(){
   eqState.bg = true;
