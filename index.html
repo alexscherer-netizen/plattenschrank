@@ -100,6 +100,9 @@ p.vs{color:var(--muted);font-size:13px;margin-bottom:16px}
 .drophint{display:block;margin-top:12px;font-size:12px;line-height:1.5}
 .hintline{font-size:12px;color:var(--muted);margin-top:10px;line-height:1.5}
 .sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+.track input.sel{width:19px;height:19px;accent-color:var(--acc);flex:0 0 auto;margin-right:2px}
+.selbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:var(--card);border:1px solid var(--acc);border-radius:var(--r);padding:10px 12px;margin-bottom:12px}
+.selbar #selText{font-size:13px;color:var(--muted);margin-right:auto}
 .albgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:14px}
 .alb{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:10px;cursor:pointer}
 .alb:hover{border-color:var(--acc)}
@@ -228,6 +231,13 @@ p.vs{color:var(--muted);font-size:13px;margin-bottom:16px}
         <option value="last_played_at">Zuletzt gespielt</option>
       </select>
       <button class="btn ghost small" id="playAll">▶ Alle abspielen</button>
+      <button class="btn ghost small" id="auswahlAn">Auswählen</button>
+    </div>
+    <div class="selbar" id="selBar" style="display:none">
+      <span id="selText">0 ausgewählt</span>
+      <button class="btn small" id="selAlbum">Album zuordnen</button>
+      <button class="btn ghost small" id="selAlle">Alle</button>
+      <button class="btn ghost small" id="selAus">Fertig</button>
     </div>
     <div class="tracks" id="libList"></div>
   </section>
@@ -421,6 +431,42 @@ p.vs{color:var(--muted);font-size:13px;margin-bottom:16px}
   </div>
 </div>
 
+<!-- ========== BEARBEITEN ========== -->
+<div class="ovl" id="bearbOvl">
+  <div class="modal">
+    <h3 id="bearbTitel">Titel bearbeiten</h3>
+    <div class="field"><label for="bTitel">Titel</label><input type="text" id="bTitel"></div>
+    <div class="field"><label for="bInterpret">Interpret</label><input type="text" id="bInterpret"></div>
+    <div class="field"><label for="bAlbum">Album</label><input type="text" id="bAlbum" list="albumListe"></div>
+    <datalist id="albumListe"></datalist>
+    <div class="row">
+      <div class="field" style="flex:1"><label for="bJahr">Jahr</label><input type="number" id="bJahr" min="1900" max="2100"></div>
+      <div class="field" style="flex:1"><label for="bGenre">Genre</label><input type="text" id="bGenre"></div>
+    </div>
+    <div class="field"><label for="bCover">Cover-Bild-URL</label><input type="url" id="bCover" placeholder="https://…"></div>
+    <div class="msg" id="bMsg"></div>
+    <div class="row" style="margin-top:12px">
+      <button class="btn" id="bSpeichern">Speichern</button>
+      <button class="btn ghost" id="bAbbrechen">Abbrechen</button>
+    </div>
+  </div>
+</div>
+
+<!-- ========== ALBUM ZUORDNEN ========== -->
+<div class="ovl" id="albOvl">
+  <div class="modal">
+    <h3 id="albZuTitel">Album zuordnen</h3>
+    <div class="field"><label for="zAlbum">Albumname</label><input type="text" id="zAlbum" list="albumListe2" placeholder="z. B. Sandra – Mein Zuhause bist du"></div>
+    <datalist id="albumListe2"></datalist>
+    <div class="field"><label for="zInterpret">Interpret (leer lassen = unverändert)</label><input type="text" id="zInterpret"></div>
+    <div class="msg" id="zMsg"></div>
+    <div class="row" style="margin-top:12px">
+      <button class="btn" id="zSpeichern">Zuordnen</button>
+      <button class="btn ghost" id="zAbbrechen">Abbrechen</button>
+    </div>
+  </div>
+</div>
+
 <!-- ========== MODAL ========== -->
 <div class="ovl" id="ovl">
   <div class="modal">
@@ -453,7 +499,7 @@ var LEGAL = {
   paypal: "https://www.paypal.com/paypalme/AlexanderGlauche"
 };
 
-var BUILD = "2026-10-16 11:30";
+var BUILD = "2026-10-16 11:45";
 
 /* Protokolliert die Upload-Schritte sichtbar in der App. Am Handy gibt es
    keine Entwicklerkonsole – ohne das bliebe jeder Fehlschlag unsichtbar. */
@@ -535,6 +581,7 @@ async function loadTracks(){
   if(r.error){ console.error(r.error); return; }
   state.tracks = r.data || [];
   renderLib(); renderFav(); renderAlben();
+  albumVorschlaege();
   coverNachladen();
 }
 
@@ -586,6 +633,7 @@ function trackNode(t, list, idx, inPl){
   var cDirekt = coverVon(t);
   var cov = cDirekt ? '<img src="'+esc(cDirekt)+'" alt="" loading="lazy" onerror="this.parentNode.textContent=\'♪\'">' : "♪";
   el.innerHTML =
+    (auswahlModus ? '<input type="checkbox" class="sel" '+(auswahl[t.id] ? "checked" : "")+' aria-label="auswählen">' : '') +
     '<div class="cover">'+cov+'</div>' +
     '<div class="tinfo">' +
       '<div class="t">'+esc(t.title)+'<span class="badge">'+
@@ -594,12 +642,31 @@ function trackNode(t, list, idx, inPl){
     '</div>' +
     '<div class="tact">' +
       '<button class="ico fav'+(t.favorite ? " on" : "")+'" title="Favorit">'+(t.favorite ? "♥" : "♡")+'</button>' +
+      '<button class="ico edit" title="Bearbeiten">✎</button>' +
       '<button class="ico addpl" title="Zu Playlist">＋</button>' +
       '<button class="ico del" title="'+(inPl ? "Aus Playlist entfernen" : "Löschen")+'">'+(inPl ? "⤫" : "🗑")+'</button>' +
     '</div>';
 
-  el.querySelector(".cover").onclick = el.querySelector(".tinfo").onclick = function(){ setQueue(list, idx); };
+  el.querySelector(".cover").onclick = el.querySelector(".tinfo").onclick = function(){
+    if(auswahlModus){
+      var k = el.querySelector(".sel");
+      k.checked = !k.checked;
+      if(k.checked) auswahl[t.id] = true; else delete auswahl[t.id];
+      zeigeAuswahl();
+      return;
+    }
+    setQueue(list, idx);
+  };
   el.querySelector(".fav").onclick = function(e){ e.stopPropagation(); toggleFav(t); };
+  el.querySelector(".edit").onclick = function(e){ e.stopPropagation(); oeffneBearbeiten(t); };
+  var kasten = el.querySelector(".sel");
+  if(kasten){
+    kasten.onclick = function(e){
+      e.stopPropagation();
+      if(this.checked) auswahl[t.id] = true; else delete auswahl[t.id];
+      zeigeAuswahl();
+    };
+  }
   el.querySelector(".addpl").onclick = function(e){ e.stopPropagation(); openPlModal(t); };
   el.querySelector(".del").onclick = function(e){
     e.stopPropagation();
@@ -647,12 +714,151 @@ $("sort").onchange = renderLib;
 $("playAll").onclick = function(){ var l = filtered(); if(l.length) setQueue(l, 0); };
 
 /* =======================================================
+   Bearbeiten und Mehrfachauswahl
+   ======================================================= */
+var auswahlModus = false, auswahl = {}, bearbTrack = null;
+
+function albumVorschlaege(){
+  var namen = {};
+  state.tracks.forEach(function(t){ if(t.album && t.album.trim()) namen[t.album.trim()] = true; });
+  var html = Object.keys(namen).sort(function(a,b){ return a.localeCompare(b,"de"); })
+    .map(function(n){ return '<option value="'+esc(n)+'">'; }).join("");
+  ["albumListe", "albumListe2"].forEach(function(id){
+    var el = $(id); if(el) el.innerHTML = html;
+  });
+}
+
+/* ---- einzelner Titel ---- */
+function oeffneBearbeiten(t){
+  bearbTrack = t;
+  albumVorschlaege();
+  $("bearbTitel").textContent = "Titel bearbeiten";
+  $("bTitel").value = t.title || "";
+  $("bInterpret").value = t.artist || "";
+  $("bAlbum").value = t.album || "";
+  $("bJahr").value = t.year || "";
+  $("bGenre").value = t.genre || "";
+  $("bCover").value = t.cover_url || "";
+  $("bMsg").className = "msg";
+  $("bMsg").textContent = "";
+  $("bearbOvl").classList.add("open");
+}
+
+$("bAbbrechen").onclick = function(){ $("bearbOvl").classList.remove("open"); };
+$("bearbOvl").onclick = function(e){ if(e.target === this) this.classList.remove("open"); };
+
+$("bSpeichern").onclick = async function(){
+  if(!bearbTrack) return;
+  var m = $("bMsg");
+  var titel = $("bTitel").value.trim();
+  if(!titel){ m.className = "msg err"; m.textContent = "Ein Titel muss stehen bleiben."; return; }
+
+  var jahrRoh = $("bJahr").value.trim();
+  var jahr = jahrRoh ? parseInt(jahrRoh, 10) : null;
+  if(jahrRoh && (isNaN(jahr) || jahr < 1900 || jahr > 2100)){
+    m.className = "msg err"; m.textContent = "Das Jahr ergibt so keinen Sinn."; return;
+  }
+
+  var neu = {
+    title: titel,
+    artist: $("bInterpret").value.trim(),
+    album: $("bAlbum").value.trim(),
+    genre: $("bGenre").value.trim(),
+    year: jahr,
+    cover_url: $("bCover").value.trim() || null
+  };
+  var r = await sb.from("mp_tracks").update(neu).eq("id", bearbTrack.id);
+  if(r.error){ m.className = "msg err"; m.textContent = r.error.message; return; }
+
+  Object.keys(neu).forEach(function(k){ bearbTrack[k] = neu[k]; });
+  $("bearbOvl").classList.remove("open");
+  renderLib(); renderFav(); renderAlben();
+  if(offenesAlbum) renderAlbumDetail();
+  if(state.queue[state.qi] && state.queue[state.qi].id === bearbTrack.id){
+    $("pTitle").textContent = neu.title;
+    $("pArtist").textContent = (neu.artist || "Unbekannt") + (neu.album ? " · " + neu.album : "");
+  }
+};
+
+/* ---- mehrere Titel auf einmal ---- */
+function zeigeAuswahl(){
+  var n = Object.keys(auswahl).length;
+  $("selText").textContent = n + (n === 1 ? " Titel ausgewählt" : " Titel ausgewählt");
+  $("selAlbum").disabled = n === 0;
+}
+
+function auswahlStarten(an){
+  auswahlModus = an;
+  if(!an) auswahl = {};
+  $("selBar").style.display = an ? "flex" : "none";
+  $("auswahlAn").style.display = an ? "none" : "";
+  zeigeAuswahl();
+  renderLib();
+}
+
+$("auswahlAn").onclick = function(){ auswahlStarten(true); };
+$("selAus").onclick = function(){ auswahlStarten(false); };
+$("selAlle").onclick = function(){
+  var liste = filtered();
+  var alleDrin = liste.every(function(t){ return auswahl[t.id]; });
+  liste.forEach(function(t){ if(alleDrin) delete auswahl[t.id]; else auswahl[t.id] = true; });
+  zeigeAuswahl();
+  renderLib();
+};
+
+$("selAlbum").onclick = function(){
+  var n = Object.keys(auswahl).length;
+  if(!n) return;
+  albumVorschlaege();
+  $("albZuTitel").textContent = n + (n === 1 ? " Titel einem Album zuordnen" : " Titel einem Album zuordnen");
+  $("zAlbum").value = "";
+  $("zInterpret").value = "";
+  $("zMsg").className = "msg";
+  $("zMsg").textContent = "";
+  $("albOvl").classList.add("open");
+};
+
+$("zAbbrechen").onclick = function(){ $("albOvl").classList.remove("open"); };
+$("albOvl").onclick = function(e){ if(e.target === this) this.classList.remove("open"); };
+
+$("zSpeichern").onclick = async function(){
+  var m = $("zMsg");
+  var name = $("zAlbum").value.trim();
+  var interpret = $("zInterpret").value.trim();
+  if(!name){ m.className = "msg err"; m.textContent = "Ein Albumname wird gebraucht."; return; }
+
+  var ids = Object.keys(auswahl);
+  var neu = { album: name };
+  if(interpret) neu.artist = interpret;
+
+  m.className = "msg";
+  m.textContent = "Wird gespeichert …";
+  /* Eine Anweisung für alle ausgewählten Titel statt einer je Titel. */
+  var r = await sb.from("mp_tracks").update(neu).in("id", ids);
+  if(r.error){ m.className = "msg err"; m.textContent = r.error.message; return; }
+
+  state.tracks.forEach(function(t){
+    if(auswahl[t.id]) Object.keys(neu).forEach(function(k){ t[k] = neu[k]; });
+  });
+  $("albOvl").classList.remove("open");
+  auswahlStarten(false);
+  renderLib(); renderFav(); renderAlben();
+  var h = $("albErgebnis");
+  h.style.display = "block";
+  h.textContent = ids.length + (ids.length === 1 ? " Titel wurde " : " Titel wurden ") +
+                  "dem Album „" + name + "“ zugeordnet.";
+};
+
+/* =======================================================
    Alben
    Gruppiert wird über Album plus Interpret: zwei Platten können
    gleich heißen, und „Greatest Hits" gibt es nicht nur einmal.
    ======================================================= */
+/* Gruppiert wird allein über den Albumnamen. Nähme man den Interpreten
+   dazu, zerfiele jeder Sampler in lauter Einzelalben – und das passiert
+   auch, sobald man bei einem Titel den Interpreten ändert. */
 function albumSchluessel(t){
-  return (t.album || "").trim().toLowerCase() + "||" + (t.artist || "").trim().toLowerCase();
+  return (t.album || "").trim().toLowerCase();
 }
 
 function alben(){
@@ -660,16 +866,20 @@ function alben(){
   state.tracks.forEach(function(t){
     if(!t.album || !t.album.trim()) return;      /* ohne Album nicht einsortierbar */
     var k = albumSchluessel(t);
-    if(!karte[k]) karte[k] = { name:t.album.trim(), interpret:(t.artist || "").trim(), titel:[], jahr:t.year || null };
+    if(!karte[k]) karte[k] = { name:t.album.trim(), interpreten:{}, titel:[], jahr:t.year || null };
     karte[k].titel.push(t);
+    if((t.artist || "").trim()) karte[k].interpreten[t.artist.trim()] = true;
     if(t.year && !karte[k].jahr) karte[k].jahr = t.year;
   });
   var liste = Object.keys(karte).map(function(k){ return karte[k]; });
   liste.forEach(function(a){
-    /* Innerhalb eines Albums nach Titelnummer, sonst alphabetisch. */
     a.titel.sort(function(x, y){
       return String(x.title || "").localeCompare(String(y.title || ""), "de");
     });
+    var namen = Object.keys(a.interpreten);
+    a.interpret = namen.length === 1 ? namen[0]
+                : namen.length === 0 ? ""
+                : "Verschiedene Interpreten";
     a.cover = null;
     for(var i = 0; i < a.titel.length && !a.cover; i++) a.cover = coverVon(a.titel[i]);
   });
@@ -708,15 +918,15 @@ function renderAlben(){
       '<div class="n">'+esc(a.name)+'</div>' +
       '<div class="i">'+esc(a.interpret || "Unbekannt")+'</div>' +
       '<div class="c">'+a.titel.length+(a.titel.length === 1 ? " Titel" : " Titel")+(a.jahr ? " · "+a.jahr : "")+'</div>';
-    d.onclick = function(){ oeffneAlbum(a.name, a.interpret); };
+    d.onclick = function(){ oeffneAlbum(a.name); };
     g.appendChild(d);
   });
 }
 
 var offenesAlbum = null;
 
-function oeffneAlbum(name, interpret){
-  offenesAlbum = { name:name, interpret:interpret };
+function oeffneAlbum(name){
+  offenesAlbum = { name:name };
   $("albIndex").style.display = "none";
   $("albDetail").style.display = "block";
   renderAlbumDetail();
@@ -724,9 +934,7 @@ function oeffneAlbum(name, interpret){
 
 function aktuellesAlbum(){
   if(!offenesAlbum) return null;
-  var treffer = alben().filter(function(a){
-    return a.name === offenesAlbum.name && a.interpret === offenesAlbum.interpret;
-  });
+  var treffer = alben().filter(function(a){ return a.name === offenesAlbum.name; });
   return treffer[0] || null;
 }
 
