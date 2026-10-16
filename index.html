@@ -100,6 +100,18 @@ p.vs{color:var(--muted);font-size:13px;margin-bottom:16px}
 .drophint{display:block;margin-top:12px;font-size:12px;line-height:1.5}
 .hintline{font-size:12px;color:var(--muted);margin-top:10px;line-height:1.5}
 .sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+.albgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:14px}
+.alb{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:10px;cursor:pointer}
+.alb:hover{border-color:var(--acc)}
+.albcover{width:100%;aspect-ratio:1/1;border-radius:10px;background:linear-gradient(135deg,#123c3a,#0f2c3a);display:grid;place-items:center;font-size:30px;overflow:hidden;margin-bottom:9px}
+.albcover img{width:100%;height:100%;object-fit:cover}
+.alb .n{font-weight:600;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.alb .i{font-size:12.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.alb .c{font-size:11.5px;color:var(--muted);margin-top:3px}
+.albkopf{display:flex;gap:14px;align-items:center;margin-bottom:14px}
+.albkopf .albcover{width:110px;flex:0 0 110px;margin-bottom:0}
+.albkopf .meta .t{font-size:17px;font-weight:600}
+.albkopf .meta .s{font-size:13px;color:var(--muted);margin-top:3px}
 .presets{display:flex;flex-wrap:wrap;gap:8px}
 .preset{padding:9px 14px;border-radius:999px;background:var(--bg2);border:1px solid var(--line);font-size:13.5px;color:var(--muted)}
 .preset.active{background:linear-gradient(135deg,var(--acc),var(--acc2));color:#04211d;border-color:transparent;font-weight:600}
@@ -195,6 +207,7 @@ p.vs{color:var(--muted);font-size:13px;margin-bottom:16px}
   <nav>
     <button class="tab active" data-view="lib">Bibliothek</button>
     <button class="tab" data-view="fav">Favoriten</button>
+    <button class="tab" data-view="alben">Alben</button>
     <button class="tab" data-view="pls">Playlists</button>
     <button class="tab" data-view="eq">Klang</button>
     <button class="tab" data-view="add">Hinzufügen</button>
@@ -224,6 +237,31 @@ p.vs{color:var(--muted);font-size:13px;margin-bottom:16px}
     <h2 class="vt">Favoriten</h2>
     <p class="vs">Alles, was du mit ♥ markiert hast.</p>
     <div class="tracks" id="favList"></div>
+  </section>
+
+  <!-- Alben -->
+  <section class="view" id="v-alben">
+    <h2 class="vt" id="albTitel">Alben</h2>
+    <p class="vs" id="albUnter">Nach Album gruppiert, gelesen aus den Kennungen der Dateien.</p>
+
+    <div id="albIndex">
+      <div class="toolbar">
+        <input type="text" id="albSuche" placeholder="Album oder Interpret suchen …">
+        <button class="btn ghost small" id="albNachtragen">Kennungen nachtragen</button>
+      </div>
+      <p class="hintline" id="albHinweis" style="display:none"></p>
+      <p class="hintline" id="albErgebnis" style="display:none"></p>
+      <div class="albgrid" id="albGrid"></div>
+    </div>
+
+    <div id="albDetail" style="display:none">
+      <div class="toolbar">
+        <button class="btn ghost small" id="albZurueck">← Zurück</button>
+        <button class="btn small" id="albPlay">▶ Album abspielen</button>
+      </div>
+      <div class="albkopf" id="albKopf"></div>
+      <div class="tracks" id="albTracks"></div>
+    </div>
   </section>
 
   <!-- Playlists -->
@@ -415,7 +453,7 @@ var LEGAL = {
   paypal: "https://www.paypal.com/paypalme/AlexanderGlauche"
 };
 
-var BUILD = "2026-09-19 12:55";
+var BUILD = "2026-10-16 11:30";
 
 /* Protokolliert die Upload-Schritte sichtbar in der App. Am Handy gibt es
    keine Entwicklerkonsole – ohne das bliebe jeder Fehlschlag unsichtbar. */
@@ -496,7 +534,8 @@ async function loadTracks(){
   var r = await sb.from("mp_tracks").select("*").order("created_at",{ascending:false});
   if(r.error){ console.error(r.error); return; }
   state.tracks = r.data || [];
-  renderLib(); renderFav();
+  renderLib(); renderFav(); renderAlben();
+  coverNachladen();
 }
 
 async function loadPlaylists(){
@@ -544,7 +583,8 @@ function fmt(sec){
 function trackNode(t, list, idx, inPl){
   var el = document.createElement("div");
   el.className = "track" + (state.queue[state.qi] && state.queue[state.qi].id === t.id ? " playing" : "");
-  var cov = t.cover_url ? '<img src="'+esc(t.cover_url)+'" alt="">' : "♪";
+  var cDirekt = coverVon(t);
+  var cov = cDirekt ? '<img src="'+esc(cDirekt)+'" alt="" loading="lazy" onerror="this.parentNode.textContent=\'♪\'">' : "♪";
   el.innerHTML =
     '<div class="cover">'+cov+'</div>' +
     '<div class="tinfo">' +
@@ -606,6 +646,112 @@ $("q").oninput = renderLib;
 $("sort").onchange = renderLib;
 $("playAll").onclick = function(){ var l = filtered(); if(l.length) setQueue(l, 0); };
 
+/* =======================================================
+   Alben
+   Gruppiert wird über Album plus Interpret: zwei Platten können
+   gleich heißen, und „Greatest Hits" gibt es nicht nur einmal.
+   ======================================================= */
+function albumSchluessel(t){
+  return (t.album || "").trim().toLowerCase() + "||" + (t.artist || "").trim().toLowerCase();
+}
+
+function alben(){
+  var karte = {};
+  state.tracks.forEach(function(t){
+    if(!t.album || !t.album.trim()) return;      /* ohne Album nicht einsortierbar */
+    var k = albumSchluessel(t);
+    if(!karte[k]) karte[k] = { name:t.album.trim(), interpret:(t.artist || "").trim(), titel:[], jahr:t.year || null };
+    karte[k].titel.push(t);
+    if(t.year && !karte[k].jahr) karte[k].jahr = t.year;
+  });
+  var liste = Object.keys(karte).map(function(k){ return karte[k]; });
+  liste.forEach(function(a){
+    /* Innerhalb eines Albums nach Titelnummer, sonst alphabetisch. */
+    a.titel.sort(function(x, y){
+      return String(x.title || "").localeCompare(String(y.title || ""), "de");
+    });
+    a.cover = null;
+    for(var i = 0; i < a.titel.length && !a.cover; i++) a.cover = coverVon(a.titel[i]);
+  });
+  liste.sort(function(a, b){ return a.name.localeCompare(b.name, "de"); });
+  return liste;
+}
+
+function renderAlben(){
+  var g = $("albGrid");
+  if(!g) return;
+  var q = ($("albSuche").value || "").trim().toLowerCase();
+  var liste = alben().filter(function(a){
+    return !q || (a.name + " " + a.interpret).toLowerCase().indexOf(q) > -1;
+  });
+
+  var ohneAlbum = state.tracks.filter(function(t){ return !t.album || !t.album.trim(); }).length;
+  var h = $("albHinweis");
+  if(ohneAlbum){
+    h.style.display = "block";
+    h.textContent = ohneAlbum + (ohneAlbum === 1 ? " Titel hat" : " Titel haben") +
+      " kein Album hinterlegt. Der Knopf „Kennungen nachtragen“ liest es aus den Dateien.";
+  } else {
+    h.style.display = "none";
+  }
+
+  g.innerHTML = "";
+  if(!liste.length){
+    g.innerHTML = '<div class="empty" style="grid-column:1/-1">' +
+      (state.tracks.length ? "Noch kein Album zugeordnet." : "Noch keine Titel in der Bibliothek.") + '</div>';
+    return;
+  }
+  liste.forEach(function(a){
+    var d = document.createElement("div");
+    d.className = "alb";
+    d.innerHTML = '<div class="albcover">' + (a.cover ? '<img src="'+esc(a.cover)+'" alt="" loading="lazy" onerror="this.parentNode.textContent=\'♫\'">' : "♫") + '</div>' +
+      '<div class="n">'+esc(a.name)+'</div>' +
+      '<div class="i">'+esc(a.interpret || "Unbekannt")+'</div>' +
+      '<div class="c">'+a.titel.length+(a.titel.length === 1 ? " Titel" : " Titel")+(a.jahr ? " · "+a.jahr : "")+'</div>';
+    d.onclick = function(){ oeffneAlbum(a.name, a.interpret); };
+    g.appendChild(d);
+  });
+}
+
+var offenesAlbum = null;
+
+function oeffneAlbum(name, interpret){
+  offenesAlbum = { name:name, interpret:interpret };
+  $("albIndex").style.display = "none";
+  $("albDetail").style.display = "block";
+  renderAlbumDetail();
+}
+
+function aktuellesAlbum(){
+  if(!offenesAlbum) return null;
+  var treffer = alben().filter(function(a){
+    return a.name === offenesAlbum.name && a.interpret === offenesAlbum.interpret;
+  });
+  return treffer[0] || null;
+}
+
+function renderAlbumDetail(){
+  var a = aktuellesAlbum();
+  if(!a){ schliesseAlbum(); return; }
+  $("albTitel").textContent = a.name;
+  $("albUnter").textContent = (a.interpret || "Unbekannt") + " · " + a.titel.length +
+    (a.titel.length === 1 ? " Titel" : " Titel") + (a.jahr ? " · " + a.jahr : "");
+  $("albKopf").innerHTML =
+    '<div class="albcover">' + (a.cover ? '<img src="'+esc(a.cover)+'" alt="" onerror="this.parentNode.textContent=\'♫\'">' : "♫") + '</div>' +
+    '<div class="meta"><div class="t">'+esc(a.name)+'</div>' +
+    '<div class="s">'+esc(a.interpret || "Unbekannt")+(a.jahr ? " · "+a.jahr : "")+'</div></div>';
+  renderList($("albTracks"), a.titel, false);
+}
+
+function schliesseAlbum(){
+  offenesAlbum = null;
+  $("albIndex").style.display = "block";
+  $("albDetail").style.display = "none";
+  $("albTitel").textContent = "Alben";
+  $("albUnter").textContent = "Nach Album gruppiert, gelesen aus den Kennungen der Dateien.";
+  renderAlben();
+}
+
 function renderPlaylists(){
   var g = $("plGrid");
   g.innerHTML = "";
@@ -655,6 +801,81 @@ function closePl(){
   $("plSub").textContent = "Sammlungen aus deiner Bibliothek.";
   renderPlaylists();
 }
+/* Bereits hochgeladene Dateien nachträglich auswerten. Gelesen wird nur
+   der Anfang jeder Datei über eine Bereichsabfrage – ein vollständiger
+   Download von 24 Titeln wäre unnötiger Datenverkehr. */
+var nachtragenLaeuft = false;
+
+async function kennungenNachtragen(){
+  if(nachtragenLaeuft) return;
+  var offen = state.tracks.filter(function(t){
+    return t.source === "storage" && t.storage_path && (!t.album || !t.album.trim());
+  });
+  var h = $("albErgebnis");
+  h.style.display = "block";
+  if(!offen.length){ h.textContent = "Alle Titel haben bereits ein Album."; return; }
+
+  nachtragenLaeuft = true;
+  $("albNachtragen").disabled = true;
+  var gefunden = 0, ohne = 0, fehler = 0;
+
+  for(var i = 0; i < offen.length; i++){
+    var t = offen[i];
+    h.textContent = "Lese " + (i + 1) + " von " + offen.length + " … (" + gefunden + " gefunden)";
+    try{
+      var link = await srcFor(t);
+      if(!link){ fehler++; continue; }
+
+      /* Erst den Kopf holen, um die Länge des Kennungsblocks zu erfahren. */
+      var kopfAntwort = await fetch(link, { headers:{ Range:"bytes=0-9" } });
+      var kopf = new Uint8Array(await kopfAntwort.arrayBuffer());
+      if(kopf.length < 10 || kopf[0] !== 0x49 || kopf[1] !== 0x44 || kopf[2] !== 0x33){ ohne++; continue; }
+      var laenge = 10 + synchsafe(kopf, 6);
+
+      var antwort = await fetch(link, { headers:{ Range:"bytes=0-" + (laenge - 1) } });
+      var tag = leseId3(await antwort.arrayBuffer());
+      if(!tag.album && !tag.interpret && !tag.titel){ ohne++; continue; }
+
+      var neu = {};
+      if(tag.album) neu.album = tag.album;
+      if(tag.interpret || tag.albumInterpret) neu.artist = tag.interpret || tag.albumInterpret;
+      if(tag.titel) neu.title = tag.titel;
+      if(tag.genre) neu.genre = tag.genre;
+      if(tag.jahr) neu.year = parseInt(tag.jahr, 10);
+      if(tag.cover && !t.cover_path){
+        var kennung = (t.storage_path.split("/").pop() || "").replace(/\.[^.]+$/, "");
+        var pfad = await ladeCoverHoch(tag.cover, kennung || t.id);
+        if(pfad) neu.cover_path = pfad;
+      }
+
+      var r = await sb.from("mp_tracks").update(neu).eq("id", t.id);
+      if(r.error){ fehler++; diag("Nachtragen fehlgeschlagen: " + r.error.message); continue; }
+      Object.keys(neu).forEach(function(k){ t[k] = neu[k]; });
+      gefunden++;
+    }catch(e){
+      fehler++;
+      diag("Nachtragen: " + (e.message || e));
+    }
+  }
+
+  nachtragenLaeuft = false;
+  $("albNachtragen").disabled = false;
+  await loadTracks();
+  /* Zuletzt setzen: loadTracks zeichnet die Ansicht neu und würde eine
+     früher gesetzte Meldung sonst überschreiben. */
+  h.style.display = "block";
+  h.textContent = "Fertig: " + gefunden + " ergänzt, " + ohne + " ohne Kennungen" +
+                  (fehler ? ", " + fehler + " fehlgeschlagen" : "") + ".";
+}
+
+$("albNachtragen").onclick = kennungenNachtragen;
+$("albZurueck").onclick = schliesseAlbum;
+$("albSuche").oninput = renderAlben;
+$("albPlay").onclick = function(){
+  var a = aktuellesAlbum();
+  if(a && a.titel.length) setQueue(a.titel, 0);
+};
+
 $("plBack").onclick = closePl;
 $("plPlay").onclick = function(){ var l = plTrackList(state.openPl); if(l.length) setQueue(l, 0); };
 
@@ -791,6 +1012,20 @@ async function handleFiles(files){
   }
 }
 
+/* Das eingebettete Cover kommt als Rohbild aus der Datei. Es landet im
+   selben Bucket wie der Ton und wird wie dieser über signierte Links
+   ausgeliefert – der Bucket ist nicht öffentlich. */
+async function ladeCoverHoch(cover, kennung){
+  try{
+    var endung = cover.mime.indexOf("png") > -1 ? "png" : "jpg";
+    var pfad = state.user.id + "/covers/" + kennung + "." + endung;
+    var blob = new Blob([cover.daten], { type:cover.mime });
+    var r = await sb.storage.from(CONFIG.bucket).upload(pfad, blob, { contentType:cover.mime, upsert:true });
+    if(r.error){ diag("Cover nicht hochgeladen: " + r.error.message); return null; }
+    return pfad;
+  }catch(e){ diag("Cover-Fehler: " + (e.message || e)); return null; }
+}
+
 async function uploadOne(file){
   var row = document.createElement("div");
   row.className = "up";
@@ -821,9 +1056,24 @@ async function uploadOne(file){
     var meta = guessMeta(file.name);
     var dur = await readDuration(file);
 
+    /* Kennungen schlagen den Dateinamen – der ist nur die Notlösung. */
+    var tag = { titel:"", interpret:"", album:"", jahr:"", genre:"", nummer:"", cover:null };
+    try{ tag = await leseId3AusDatei(file); }
+    catch(e){ diag("Kennungen nicht lesbar: " + (e.message || e)); }
+    if(tag.version) diag("ID3 " + tag.version + ": " +
+      [tag.titel, tag.interpret, tag.album].filter(Boolean).join(" · ") +
+      (tag.cover ? " · Cover " + Math.round(tag.cover.daten.length/1024) + " KB" : ""));
+
+    var coverPfad = tag.cover ? await ladeCoverHoch(tag.cover, rnd) : null;
+
     var ins = await sb.from("mp_tracks").insert({
-      user_id:state.user.id, title:meta.title || file.name, artist:meta.artist,
-      source:"storage", storage_path:path, duration:dur
+      user_id:state.user.id,
+      title: tag.titel || meta.title || file.name,
+      artist: tag.interpret || tag.albumInterpret || meta.artist,
+      album: tag.album || "",
+      genre: tag.genre || "",
+      year: tag.jahr ? parseInt(tag.jahr, 10) : null,
+      source:"storage", storage_path:path, duration:dur, cover_path:coverPfad
     });
     if(ins.error){ st.textContent = "DB-Fehler: " + ins.error.message; diag("DB-FEHLER: " + ins.error.message); return; }
 
@@ -916,6 +1166,48 @@ $("uAdd").onclick = async function(){
 /* =======================================================
    Player
    ======================================================= */
+/* Cover liegen im privaten Bucket. Statt für jedes Bild einzeln einen
+   signierten Link zu holen, werden alle offenen Pfade gesammelt und in
+   einem Aufruf signiert – bei 24 Titeln spart das 24 Anfragen. */
+var coverLinks = {};
+
+async function signiereCover(pfade){
+  var offen = pfade.filter(function(p){
+    return p && !(coverLinks[p] && coverLinks[p].exp > Date.now());
+  });
+  if(!offen.length) return;
+  var r = await sb.storage.from(CONFIG.bucket).createSignedUrls(offen, 3600);
+  if(r.error){ diag("Cover-Links: " + r.error.message); return; }
+  (r.data || []).forEach(function(e){
+    if(e.signedUrl) coverLinks[e.path] = { url:e.signedUrl, exp:Date.now() + 3000000 };
+  });
+}
+
+function coverVon(t){
+  if(!t) return null;
+  if(t.cover_url) return t.cover_url;
+  if(t.cover_path && coverLinks[t.cover_path]) return coverLinks[t.cover_path].url;
+  return null;
+}
+
+/* Nach dem Signieren müssen die bereits gezeichneten Bilder nachgezogen
+   werden – sonst bleibt bis zum nächsten Rendern das Notenzeichen stehen. */
+async function coverNachladen(){
+  var pfade = state.tracks.map(function(t){ return t.cover_path; }).filter(Boolean);
+  if(!pfade.length) return;
+  await signiereCover(pfade);
+  renderLib(); renderFav(); renderAlben();
+  var t = state.queue[state.qi];
+  if(t) setzeSpielerCover(t);
+}
+
+function setzeSpielerCover(t){
+  var c = coverVon(t);
+  $("pCover").innerHTML = c
+    ? '<img src="'+esc(c)+'" alt="" onerror="this.parentNode.textContent=\'♪\'">'
+    : (t.source === "soundcloud" ? "☁" : "♪");
+}
+
 async function srcFor(t){
   if(t.source === "url") return t.url;
   var c = state.signed[t.storage_path];
@@ -965,7 +1257,7 @@ async function play(){
   startEq();
   $("pTitle").textContent = t.title;
   $("pArtist").textContent = (t.artist || "Unbekannt") + (t.album ? " · " + t.album : "");
-  $("pCover").innerHTML = t.cover_url ? '<img src="'+esc(t.cover_url)+'" alt="">' : "♪";
+  setzeSpielerCover(t);
   renderLib(); renderFav();
   if(state.openPl) renderPlDetail(state.openPl);
   syncEqUI();
@@ -1132,6 +1424,197 @@ function setSessionState(st){
 }
 
 /* =======================================================
+   ID3-Leser
+   Liest die Kennungen aus einer MP3-Datei: Titel, Interpret,
+   Album, Jahr, Genre, Titelnummer und ein eingebettetes Cover.
+   Unterstützt ID3v2.2, v2.3 und v2.4 ohne fremde Bibliothek.
+   ======================================================= */
+
+/* v2.4 kodiert Längen „synchsafe": sieben Nutzbits je Byte, damit im
+   Datenstrom nie eine Folge entsteht, die ein Abspielgerät für den
+   Beginn eines Tonrahmens halten könnte. v2.3 zählt dagegen normal. */
+function synchsafe(b, o){
+  return (b[o] & 0x7f) << 21 | (b[o+1] & 0x7f) << 14 | (b[o+2] & 0x7f) << 7 | (b[o+3] & 0x7f);
+}
+function uint32(b, o){
+  return b[o] << 24 | b[o+1] << 16 | b[o+2] << 8 | b[o+3];
+}
+function uint24(b, o){
+  return b[o] << 16 | b[o+1] << 8 | b[o+2];
+}
+
+function latin1(bytes){
+  var s = "";
+  for(var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+  return s;
+}
+
+function decodeText(bytes, encoding){
+  try{
+    if(encoding === 0) return new TextDecoder("iso-8859-1").decode(bytes);
+    if(encoding === 1){
+      /* UTF-16 mit Byte-Reihenfolge-Marke am Anfang */
+      if(bytes.length >= 2){
+        if(bytes[0] === 0xff && bytes[1] === 0xfe) return new TextDecoder("utf-16le").decode(bytes.subarray(2));
+        if(bytes[0] === 0xfe && bytes[1] === 0xff) return new TextDecoder("utf-16be").decode(bytes.subarray(2));
+      }
+      return new TextDecoder("utf-16le").decode(bytes);
+    }
+    if(encoding === 2) return new TextDecoder("utf-16be").decode(bytes);
+    return new TextDecoder("utf-8").decode(bytes);
+  }catch(e){
+    return latin1(bytes);
+  }
+}
+
+/* Schneidet abschließende Nullbytes ab – viele Programme hängen sie an. */
+function trimNull(s){
+  return s.replace(/\u0000+$/g, "").replace(/\u0000/g, " ").trim();
+}
+
+/* Sucht das Ende der Beschreibung: ein Nullbyte, bei UTF-16 deren zwei. */
+function findTerminator(bytes, start, encoding){
+  var zweiByte = (encoding === 1 || encoding === 2);
+  if(zweiByte){
+    for(var i = start; i + 1 < bytes.length; i += 2){
+      if(bytes[i] === 0 && bytes[i+1] === 0) return { ende:i, weiter:i + 2 };
+    }
+  } else {
+    for(var j = start; j < bytes.length; j++){
+      if(bytes[j] === 0) return { ende:j, weiter:j + 1 };
+    }
+  }
+  return { ende:bytes.length, weiter:bytes.length };
+}
+
+var FELDER = {
+  TIT2:"titel", TT2:"titel",
+  TPE1:"interpret", TP1:"interpret",
+  TPE2:"albumInterpret", TP2:"albumInterpret",
+  TALB:"album", TAL:"album",
+  TYER:"jahr", TYE:"jahr", TDRC:"jahr",
+  TCON:"genre", TCO:"genre",
+  TRCK:"nummer", TRK:"nummer"
+};
+
+/* Genres standen in frühen Dateien als Zahl in Klammern, etwa „(17)". */
+var GENRES = ["Blues","Classic Rock","Country","Dance","Disco","Funk","Grunge","Hip-Hop",
+  "Jazz","Metal","New Age","Oldies","Other","Pop","R&B","Rap","Reggae","Rock","Techno",
+  "Industrial","Alternative","Ska","Death Metal","Pranks","Soundtrack","Euro-Techno",
+  "Ambient","Trip-Hop","Vocal","Jazz+Funk","Fusion","Trance","Classical","Instrumental",
+  "Acid","House","Game","Sound Clip","Gospel","Noise","Alt. Rock","Bass","Soul","Punk",
+  "Space","Meditative","Instrumental Pop","Instrumental Rock","Ethnic","Gothic","Darkwave",
+  "Techno-Industrial","Electronic","Pop-Folk","Eurodance","Dream","Southern Rock","Comedy",
+  "Cult","Gangsta Rap","Top 40","Christian Rap","Pop/Funk","Jungle","Native American",
+  "Cabaret","New Wave","Psychedelic","Rave","Showtunes","Trailer","Lo-Fi","Tribal",
+  "Acid Punk","Acid Jazz","Polka","Retro","Musical","Rock & Roll","Hard Rock"];
+
+function genreKlartext(wert){
+  if(!wert) return "";
+  var m = wert.match(/^\((\d+)\)\s*(.*)$/);
+  if(m){
+    var rest = m[2].trim();
+    if(rest) return rest;
+    var nr = parseInt(m[1], 10);
+    return GENRES[nr] || "";
+  }
+  if(/^\d+$/.test(wert)){
+    var n = parseInt(wert, 10);
+    return GENRES[n] || wert;
+  }
+  return wert;
+}
+
+function leseId3(buffer){
+  var b = new Uint8Array(buffer);
+  var ergebnis = { titel:"", interpret:"", albumInterpret:"", album:"", jahr:"",
+                   genre:"", nummer:"", cover:null, version:null };
+
+  if(b.length < 10 || b[0] !== 0x49 || b[1] !== 0x44 || b[2] !== 0x33) return ergebnis;  /* "ID3" */
+
+  var haupt = b[3];
+  ergebnis.version = "2." + haupt + "." + b[4];
+  var flags = b[5];
+  var groesse = synchsafe(b, 6);
+  var ende = Math.min(10 + groesse, b.length);
+  var p = 10;
+
+  /* Erweiterten Kopf überspringen, falls vorhanden */
+  if(flags & 0x40){
+    if(haupt === 4) p += synchsafe(b, p);
+    else p += uint32(b, p) + 4;
+  }
+
+  var kurz = (haupt === 2);
+  var idLaenge = kurz ? 3 : 4;
+  var kopfLaenge = kurz ? 6 : 10;
+
+  while(p + kopfLaenge <= ende){
+    var id = latin1(b.subarray(p, p + idLaenge));
+    if(!/^[A-Z0-9]{3,4}$/.test(id)) break;   /* Auffüllbytes erreicht */
+
+    var len = kurz ? uint24(b, p + 3)
+                   : (haupt === 4 ? synchsafe(b, p + 4) : uint32(b, p + 4));
+    var daten = p + kopfLaenge;
+    if(len <= 0 || daten + len > ende) break;
+    var inhalt = b.subarray(daten, daten + len);
+
+    if(id === "APIC" || id === "PIC"){
+      var enc = inhalt[0];
+      var q = 1, mime;
+      if(id === "PIC"){
+        var kuerzel = latin1(inhalt.subarray(1, 4)).toUpperCase();
+        mime = kuerzel === "PNG" ? "image/png" : "image/jpeg";
+        q = 4;
+      } else {
+        var m1 = findTerminator(inhalt, 1, 0);
+        mime = latin1(inhalt.subarray(1, m1.ende)) || "image/jpeg";
+        q = m1.weiter;
+      }
+      var art = inhalt[q];       /* 3 = vorderes Cover */
+      q += 1;
+      var m2 = findTerminator(inhalt, q, enc);
+      q = m2.weiter;
+      var bild = inhalt.subarray(q);
+      /* Ein vorderes Cover gewinnt gegen jedes andere Bild. */
+      if(bild.length > 100 && (!ergebnis.cover || art === 3)){
+        ergebnis.cover = { mime:mime, daten:bild.slice(), art:art };
+      }
+    } else if(FELDER[id]){
+      var feld = FELDER[id];
+      var text = trimNull(decodeText(inhalt.subarray(1), inhalt[0]));
+      if(text && !ergebnis[feld]) ergebnis[feld] = text;
+    }
+
+    p = daten + len;
+  }
+
+  if(ergebnis.genre) ergebnis.genre = genreKlartext(ergebnis.genre);
+  if(ergebnis.jahr){
+    var j = ergebnis.jahr.match(/\d{4}/);
+    ergebnis.jahr = j ? j[0] : "";
+  }
+  if(ergebnis.nummer) ergebnis.nummer = (ergebnis.nummer.split("/")[0] || "").trim();
+
+  return ergebnis;
+}
+
+/* Nur den Anfang der Datei lesen – die Kennungen stehen vorn. Reicht der
+   Ausschnitt nicht, weil ein großes Cover eingebettet ist, wird einmal
+   nachgefasst. Das spart bei großen Dateien viel Arbeitsspeicher. */
+async function leseId3AusDatei(file){
+  var ERSTER_BLOCK = 256 * 1024;
+  var kopf = new Uint8Array(await file.slice(0, 10).arrayBuffer());
+  if(kopf.length < 10 || kopf[0] !== 0x49 || kopf[1] !== 0x44 || kopf[2] !== 0x33){
+    return { titel:"", interpret:"", album:"", jahr:"", genre:"", nummer:"", cover:null, version:null };
+  }
+  var noetig = 10 + synchsafe(kopf, 6);
+  var menge = Math.min(Math.max(noetig, ERSTER_BLOCK), file.size);
+  var puffer = await file.slice(0, menge).arrayBuffer();
+  return leseId3(puffer);
+}
+
+/* =======================================================
    SoundCloud
    Der offizielle Widget-Player wird als Rahmen eingebettet und von
    außen ferngesteuert. Das ist der von SoundCloud vorgesehene Weg:
@@ -1165,7 +1648,7 @@ async function playSoundCloud(t){
   document.body.style.paddingBottom = "270px";
   $("pTitle").textContent = t.title;
   $("pArtist").textContent = (t.artist || "SoundCloud") + (t.album ? " · " + t.album : "");
-  $("pCover").innerHTML = t.cover_url ? '<img src="'+esc(t.cover_url)+'" alt="">' : "☁";
+  setzeSpielerCover(t);
   renderLib(); renderFav();
   if(state.openPl) renderPlDetail(state.openPl);
   syncEqUI();
